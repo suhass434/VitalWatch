@@ -1,0 +1,10 @@
+psutil
+numpy
+pandas
+scikit-learn
+fastapi
+uvicorn
+sqlalchemy
+pyyaml
+plotly
+streamlit
