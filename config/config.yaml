@@ -1,0 +1,31 @@
+monitoring:
+  interval: 60
+  thresholds:
+    cpu: 80
+    memory: 90
+    disk: 85
+
+database:
+  url: "sqlite:///system_monitor.db"
+  backup_path: "/var/backups/monitor/"
+  backup_interval: 3600
+
+alerts:
+  channels:
+    email:
+      enabled: true
+      smtp_server: "smtp.gmail.com"
+      smtp_port: 587
+      username: ""
+      password: ""
+      recipients: 
+        - "admin@company.com"
+    slack:
+      enabled: true
+      webhook_url: "https://hooks.slack.com/services/YOUR/WEBHOOK/URL"
+      channel: "#monitoring"
+
+recovery:
+  auto_recover: false
+  max_attempts: 3
+  cooldown_period: 300
