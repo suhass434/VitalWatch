@@ -36,4 +36,16 @@ QPushButton {
 QPushButton:hover {
     background-color: #5e5e5e;
 }
+
+QChartView {
+    background-color: #2B2B2B;
+    border: 1px solid #3e3e3e;
+    border-radius: 4px;
+}
+
+QLabel {
+    color: #ffffff;
+    font-size: 12px;
+    padding: 5px;
+}
 """
