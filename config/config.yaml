@@ -1,5 +1,5 @@
 monitoring:
-  interval: 60
+  interval: 1
   thresholds:
     cpu: 80
     memory: 90

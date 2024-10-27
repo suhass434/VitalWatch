@@ -8,5 +8,4 @@ sqlalchemy
 pyyaml
 plotly
 streamlit
-transformers
-pytorch
+pyQt5
