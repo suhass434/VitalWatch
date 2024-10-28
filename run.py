@@ -37,12 +37,13 @@ def monitoring_task(main_window, config):
         try:
             current_time = time.time()
             metrics = system_monitor.collect_metrics()
-            processes = process_monitor.monitor_processes()
+            processes = process_monitor.monitor_processes(config['monitoring']['process']['count'])
             
             # Store and update metrics
             db_handler.store_metrics(metrics)
             main_window.update_metrics(metrics)
-            
+            main_window.update_process_table(processes)
+
             # Check thresholds and handle alerts
             if metrics['cpu']['cpu_percent'] > config['monitoring']['thresholds']['cpu']:
                 alert_manager.send_slack_alert("High CPU Usage Detected!")

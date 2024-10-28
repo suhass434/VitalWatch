@@ -1,4 +1,4 @@
-from PyQt5.QtWidgets import (QMainWindow, QWidget, QVBoxLayout,QGridLayout, QTabWidget, QPushButton, QLabel)
+from PyQt5.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, QTabWidget, QPushButton, QLabel, QTableWidget, QTableWidgetItem, QHeaderView)
 from PyQt5.QtChart import QChart, QChartView, QLineSeries, QValueAxis
 from PyQt5.QtCore import Qt
 from PyQt5.QtGui import QColor, QBrush
@@ -11,7 +11,7 @@ class MainWindow(QMainWindow):
         self.cpu_label = QLabel("CPU Usage: --")
         self.memory_label = QLabel("Memory Usage: --")
         self.disk_label = QLabel("Disk Usage: --")
-
+        
         # Initialize data series for graphs
         self.cpu_series = QLineSeries()
         self.memory_series = QLineSeries()
@@ -107,23 +107,54 @@ class MainWindow(QMainWindow):
         tabs = QTabWidget()
         layout.addWidget(tabs)
         
+        # overview tab
+        overview_widget = QWidget()
+        overview_layout = QGridLayout(overview_widget)
+
+        # Add labels to overview tab
+        overview_layout.addWidget(self.cpu_label, 0, 0)
+        overview_layout.addWidget(QChartView(self.cpu_chart), 1, 0)
+        overview_layout.addWidget(self.memory_label, 0, 1)
+        overview_layout.addWidget(QChartView(self.memory_chart), 1, 1)
+        overview_layout.addWidget(self.disk_label, 2, 0)
+        overview_layout.addWidget(QChartView(self.disk_chart), 3, 0)        
+        tabs.addTab(overview_widget, "Overview")
+
         # Processes tab
         processes_widget = QWidget()
-        processes_layout = QGridLayout(processes_widget)
+        processes_layout = QVBoxLayout(processes_widget)        
+        
+        # Add Show All/Show Less button
+        button_container = QWidget()
+        button_layout = QHBoxLayout(button_container)
+        button_layout.setAlignment(Qt.AlignRight)  
+        self.show_all_button = QPushButton("Show All")
+        self.show_all_button.setMaximumWidth(130)  # Set maximum width
+        self.show_all_button.setFixedHeight(30)         
+        self.show_all_button.clicked.connect(self.toggle_process_view)
+        self.show_all_processes = False
+        button_layout.addWidget(self.show_all_button)
+        processes_layout.addWidget(button_container)
 
-        # Add labels to Processes tab
-        processes_layout.addWidget(self.cpu_label, 0, 0)
-        processes_layout.addWidget(QChartView(self.cpu_chart), 1, 0)
-        processes_layout.addWidget(self.memory_label, 0, 1)
-        processes_layout.addWidget(QChartView(self.memory_chart), 1, 1)
-        processes_layout.addWidget(self.disk_label, 2, 0)
-        processes_layout.addWidget(QChartView(self.disk_chart), 3, 0)        
-        tabs.addTab(processes_widget, "Processes")
+        # Create table widget for processes
+        self.process_table = QTableWidget()
+        self.process_table.setColumnCount(4)
+        self.process_table.setHorizontalHeaderLabels(['Process Name', 'PID', 'CPU %', 'Memory %'])
+    
+        # Set column stretching
+        header = self.process_table.horizontalHeader()
+        header.setSectionResizeMode(0, QHeaderView.Stretch)
+        for i in range(1, 4):
+            header.setSectionResizeMode(i, QHeaderView.ResizeToContents)
 
+        processes_layout.addWidget(self.process_table)
+        tabs.addTab(processes_widget, "Processes")        
 
-        # Settings tab
-        settings_widget = QWidget()
-        tabs.addTab(settings_widget, "Settings")
+    def toggle_process_view(self):
+        self.show_all_processes = not self.show_all_processes
+        self.show_all_button.setText("Show Less" if self.show_all_processes else "Show All Processes")
+        # Trigger table update with current data
+        self.update_process_table(self.current_processes)
 
     def update_metrics(self, metrics):
         # Update labels
@@ -142,6 +173,19 @@ class MainWindow(QMainWindow):
             self.disk_series.remove(0)
 
         self.data_points += 1
+
+    def update_process_table(self, processes):
+        self.current_processes = processes
+        sorted_processes = sorted(processes, key=lambda x: float(x['cpu_percent']), reverse=True)
+        display_processes = sorted_processes if self.show_all_processes else sorted_processes[:10]
+        
+        # Update table
+        self.process_table.setRowCount(len(display_processes))
+        for row, process in enumerate(display_processes):
+            self.process_table.setItem(row, 0, QTableWidgetItem(process['name']))
+            self.process_table.setItem(row, 1, QTableWidgetItem(str(process['pid'])))
+            self.process_table.setItem(row, 2, QTableWidgetItem(f"{process['cpu_percent']:.1f}"))
+            self.process_table.setItem(row, 3, QTableWidgetItem(f"{process['memory_percent']:.1f}"))        
 
     def closeEvent(self, event):
         # Minimize to tray instead of closing
