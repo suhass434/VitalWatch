@@ -4,10 +4,12 @@ from PyQt5.QtCore import Qt
 from PyQt5.QtGui import QColor, QBrush
 import threading
 from app.gui.styles import STYLE_SHEET
+import yaml
 
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
+        self.current_processes = []
         self.cpu_label = QLabel("CPU Usage: --")
         self.memory_label = QLabel("Memory Usage: --")
         self.disk_label = QLabel("Disk Usage: --")
@@ -27,13 +29,20 @@ class MainWindow(QMainWindow):
         self.setup_charts()
         self.setup_ui()        
 
+    def load_config(self):
+        with open('config/config.yaml', 'r') as file:
+            return yaml.safe_load(file)    
+
     def setup_charts(self):
         chart_theme = {
         'background': QColor("#2B2B2B"),
         'text': QColor("#FFFFFF"),
         'grid': QColor("#3C3F41")
         }    
-        
+        config = self.load_config()
+        self.min_count = config['monitoring']['process']['min_count']
+        self.max_count = config['monitoring']['process']['max_count']
+
         # CPU Chart
         self.cpu_series.setColor(QColor("#FF6B6B"))
         self.cpu_chart.setBackgroundVisible(True)
@@ -128,7 +137,7 @@ class MainWindow(QMainWindow):
         button_container = QWidget()
         button_layout = QHBoxLayout(button_container)
         button_layout.setAlignment(Qt.AlignRight)  
-        self.show_all_button = QPushButton("Show All")
+        self.show_all_button = QPushButton("Show More")
         self.show_all_button.setMaximumWidth(130)  # Set maximum width
         self.show_all_button.setFixedHeight(30)         
         self.show_all_button.clicked.connect(self.toggle_process_view)
@@ -152,7 +161,7 @@ class MainWindow(QMainWindow):
 
     def toggle_process_view(self):
         self.show_all_processes = not self.show_all_processes
-        self.show_all_button.setText("Show Less" if self.show_all_processes else "Show All Processes")
+        self.show_all_button.setText("Show Less" if self.show_all_processes else "Show More")
         # Trigger table update with current data
         self.update_process_table(self.current_processes)
 
@@ -175,11 +184,14 @@ class MainWindow(QMainWindow):
         self.data_points += 1
 
     def update_process_table(self, processes):
+        if not self.isVisible():
+            return        
         self.current_processes = processes
         sorted_processes = sorted(processes, key=lambda x: float(x['cpu_percent']), reverse=True)
-        display_processes = sorted_processes if self.show_all_processes else sorted_processes[:10]
+        display_processes = sorted_processes[:self.max_count] if self.show_all_processes else sorted_processes[:self.min_count]
         
         # Update table
+        
         self.process_table.setRowCount(len(display_processes))
         for row, process in enumerate(display_processes):
             self.process_table.setItem(row, 0, QTableWidgetItem(process['name']))

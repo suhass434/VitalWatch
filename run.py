@@ -37,7 +37,7 @@ def monitoring_task(main_window, config):
         try:
             current_time = time.time()
             metrics = system_monitor.collect_metrics()
-            processes = process_monitor.monitor_processes(config['monitoring']['process']['count'])
+            processes = process_monitor.monitor_processes()
             
             # Store and update metrics
             db_handler.store_metrics(metrics)

@@ -5,8 +5,9 @@ monitoring:
     memory: 90
     disk: 85
   process:
-    count: 50
-    sleep: 0.05
+    min_count: 10
+    max_count: 100
+    sleep: 0.1
 
 database:
   url: "sqlite:///system_monitor.db"

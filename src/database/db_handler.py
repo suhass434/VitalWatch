@@ -40,15 +40,23 @@ class DatabaseHandler:
         self.session.add(system_metrics)
         self.session.commit()
 
-def backup_database(self, backup_path):
-    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-    backup_file = f"{backup_path}/system_monitor_{timestamp}.db"
+    def backup_database(self, backup_path):
+        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        backup_file = f"{backup_path}/system_monitor_{timestamp}.db"
+        
+        os.makedirs(backup_path, exist_ok=True)
+        
+        backup_connection = sqlite3.connect(backup_file)
+        
+        with backup_connection:
+            self.engine.raw_connection().backup(backup_connection)
+        
+        return backup_file
     
-    os.makedirs(backup_path, exist_ok=True)
-    
-    backup_connection = sqlite3.connect(backup_file)
-    
-    with backup_connection:
-        self.engine.raw_connection().backup(backup_connection)
-    
-    return backup_file
+    def get_historical_metrics(self, limit = 50) {
+        metrics = self.session.query(SystemMetrics)\
+            .order_by(SystemMetrics.timestamp.desc())\
+            .limit(limit)\
+            .all()
+        return metrics
+    }

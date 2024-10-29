@@ -25,12 +25,11 @@ class ProcessMonitor:
         except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
                 return None
 
-    def monitor_processes(self,count):
+    def monitor_processes(self):
         processes = []
 
         for proc in psutil.process_iter(['pid', 'name', 'status', 'cpu_percent', 'memory_percent', 'create_time']):
             info = self.get_process_info(proc)
             if info:
                 processes.append(info)
-                if count and len(processes) >= count: break
         return processes
