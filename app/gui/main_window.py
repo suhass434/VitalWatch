@@ -1,7 +1,7 @@
 from PyQt5.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, QTabWidget, QPushButton, QLabel, QTableWidget, QTableWidgetItem, QHeaderView, QGroupBox, QCheckBox)
 from PyQt5.QtChart import QChart, QChartView, QLineSeries, QValueAxis
 from PyQt5.QtCore import Qt
-from PyQt5.QtGui import QColor, QBrush
+from PyQt5.QtGui import QColor, QBrush, QPen
 import threading
 from app.gui.styles import STYLE_SHEET
 import yaml
@@ -40,8 +40,9 @@ class MainWindow(QMainWindow):
                 'text': QColor("#FFFFFF"),
                 'grid': QColor("#3C3F41"),
                 'cpu_line': QColor("#FF6B6B"),
-                'memory_line': QColor("#4ECDC4"),
-                'disk_line': QColor("#45B7D1")
+                'memory_line': QColor("#FF6B6B"),#"#4ECDC4"
+                'disk_line': QColor("#FF6B6B"),
+                'fill_color': QColor("#FF6B6B").lighter(170) 
             }       
         config = self.load_config()
         self.max_count = config['monitoring']['process']['max_count']
@@ -54,10 +55,11 @@ class MainWindow(QMainWindow):
         self.cpu_chart.setTitleBrush(QBrush(chart_theme['text']))
         self.cpu_chart.setTitle("CPU Usage %")
         self.cpu_chart.legend().hide()  # Hide legend for cleaner look
-        self.cpu_chart.setAnimationOptions(QChart.SeriesAnimations)  # Add smooth animations
+        self.cpu_chart.setAnimationOptions(QChart.SeriesAnimations)  # smooth animations
         
         axis_x = QValueAxis()
         axis_y = QValueAxis()
+        axis_x.setLabelsVisible(False)
         axis_x.setLabelsColor(chart_theme['text'])
         axis_y.setLabelsColor(chart_theme['text'])
         axis_x.setGridLineColor(chart_theme['grid'])
@@ -69,6 +71,9 @@ class MainWindow(QMainWindow):
         self.cpu_chart.addAxis(axis_y, Qt.AlignLeft)
         self.cpu_series.attachAxis(axis_x)
         self.cpu_series.attachAxis(axis_y)
+        cpu_pen = QPen(chart_theme['cpu_line'])
+        cpu_pen.setWidth(config['gui']['pen_thickness'])
+        self.cpu_series.setPen(cpu_pen)
 
         # Memory Chart - Create new axes instances
         self.memory_series.setColor(QColor("#FF6B6B"))
@@ -82,6 +87,7 @@ class MainWindow(QMainWindow):
 
         memory_x = QValueAxis()
         memory_y = QValueAxis()
+        memory_x.setLabelsVisible(False)
         memory_x.setLabelsColor(chart_theme['text'])
         memory_y.setLabelsColor(chart_theme['text'])
         memory_x.setGridLineColor(chart_theme['grid'])
@@ -93,6 +99,9 @@ class MainWindow(QMainWindow):
         self.memory_chart.addAxis(memory_y, Qt.AlignLeft)
         self.memory_series.attachAxis(memory_x)
         self.memory_series.attachAxis(memory_y)
+        memory_pen = QPen(chart_theme['memory_line'])
+        memory_pen.setWidth(config['gui']['pen_thickness'])
+        self.memory_series.setPen(memory_pen)
 
         # Disk Chart - Create new axes instances
         self.disk_series.setColor(QColor("#FF6B6B"))
@@ -101,8 +110,12 @@ class MainWindow(QMainWindow):
         self.disk_chart.setTitleBrush(QBrush(chart_theme['text']))    
         self.disk_chart.addSeries(self.disk_series)
         self.disk_chart.setTitle("Disk Usage %")
+        self.disk_chart.legend().hide()
+        self.disk_chart.setAnimationOptions(QChart.SeriesAnimations)
+
         disk_x = QValueAxis()
         disk_y = QValueAxis()
+        disk_x.setLabelsVisible(False)
         disk_x.setLabelsColor(chart_theme['text'])
         disk_y.setLabelsColor(chart_theme['text'])
         disk_x.setGridLineColor(chart_theme['grid'])
@@ -113,6 +126,9 @@ class MainWindow(QMainWindow):
         self.disk_chart.addAxis(disk_y, Qt.AlignLeft)
         self.disk_series.attachAxis(disk_x)
         self.disk_series.attachAxis(disk_y)
+        disk_pen = QPen(chart_theme['disk_line'])
+        disk_pen    .setWidth(config['gui']['pen_thickness'])
+        self.disk_series.setPen(disk_pen)
 
     def setup_ui(self):
         self.setWindowTitle("AutoGuard")
@@ -131,6 +147,7 @@ class MainWindow(QMainWindow):
         # overview tab
         overview_widget = QWidget()
         overview_layout = QGridLayout(overview_widget)
+
         # Add labels to overview tab
         overview_layout.addWidget(self.cpu_label, 0, 0)
         overview_layout.addWidget(QChartView(self.cpu_chart), 1, 0)
@@ -143,7 +160,8 @@ class MainWindow(QMainWindow):
 
         # Processes tab
         processes_widget = QWidget()
-        processes_layout = QVBoxLayout(processes_widget)        
+        processes_layout = QVBoxLayout(processes_widget) 
+
         # Add Show All/Show Less button
         button_container = QWidget()
         button_layout = QHBoxLayout(button_container)
@@ -155,16 +173,18 @@ class MainWindow(QMainWindow):
         self.show_all_processes = False
         button_layout.addWidget(self.show_all_button)
         processes_layout.addWidget(button_container)
+
         # Create table widget for processes
         self.process_table = QTableWidget()
-        self.process_table.setColumnCount(4)
-        self.process_table.setHorizontalHeaderLabels(['Process Name', 'PID', 'CPU %', 'Memory %'])
+        self.process_table.setColumnCount(5)
+        self.process_table.setHorizontalHeaderLabels(['Process Name', 'Status', 'CPU %', 'Memory %', 'Create Time'])
+        
         # Set column stretching
         header = self.process_table.horizontalHeader()
-        header.setSectionResizeMode(0, QHeaderView.Stretch)
-        for i in range(1, 4):
-            header.setSectionResizeMode(i, QHeaderView.ResizeToContents)
-
+        for i in range(self.process_table.columnCount()):
+            header.setSectionResizeMode(i, QHeaderView.Stretch)
+        
+        header.setDefaultAlignment(Qt.AlignLeft)
         processes_layout.addWidget(self.process_table)
         tabs.addTab(processes_widget, "Processes")        
 
@@ -204,14 +224,13 @@ class MainWindow(QMainWindow):
         self.memory_series.append(self.data_points, metrics['memory']['percent'])
         self.disk_series.append(self.data_points, metrics['disk']['percent'])
 
-        if self.data_points > self.max_data_points:
+        if self.data_points >= self.max_data_points:
             self.cpu_series.remove(0)
             self.memory_series.remove(0)
             self.disk_series.remove(0)
             
             for chart in [self.cpu_chart, self.memory_chart, self.disk_chart]:
                 chart.axes(Qt.Horizontal)[0].setRange(self.data_points - self.max_data_points, self.data_points)
-
         self.data_points += 1
 
     def update_process_table(self, processes):
@@ -231,9 +250,11 @@ class MainWindow(QMainWindow):
         self.process_table.setRowCount(len(display_processes))
         for row, process in enumerate(display_processes):
             self.process_table.setItem(row, 0, QTableWidgetItem(process['name']))
-            self.process_table.setItem(row, 1, QTableWidgetItem(str(process['pid'])))
+            self.process_table.setItem(row, 1, QTableWidgetItem(f"{process['status']}"))
             self.process_table.setItem(row, 2, QTableWidgetItem(f"{process['cpu_percent']:.1f}"))
             self.process_table.setItem(row, 3, QTableWidgetItem(f"{process['memory_percent']:.1f}"))        
+            self.process_table.setItem(row, 4, QTableWidgetItem(f"{process['create_time']}"))
+
 
     def closeEvent(self, event):
         if self.background_checkbox.isChecked():

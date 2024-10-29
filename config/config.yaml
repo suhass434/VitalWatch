@@ -32,3 +32,6 @@ recovery:
   auto_recover: false
   max_attempts: 3
   cooldown_period: 300
+
+gui:
+  pen_thickness: 2
