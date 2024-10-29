@@ -127,7 +127,7 @@ class MainWindow(QMainWindow):
         self.disk_series.attachAxis(disk_x)
         self.disk_series.attachAxis(disk_y)
         disk_pen = QPen(chart_theme['disk_line'])
-        disk_pen    .setWidth(config['gui']['pen_thickness'])
+        disk_pen.setWidth(config['gui']['pen_thickness'])
         self.disk_series.setPen(disk_pen)
 
     def setup_ui(self):
