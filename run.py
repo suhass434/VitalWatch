@@ -33,26 +33,14 @@ def monitoring_task(main_window, config):
     last_backup_time = time.time()
     backup_interval = config['database']['backup_interval']
 
-    # #load history data on startup
-    # historical_data = db_handler.get_historical_metrics(25)
-    # for metric in historical_data:
-    #     metrics = {
-    #     'cpu': {'cpu_percent': metric.cpu_percent},
-    #     'memory': {'percent': metric.memory_percent},
-    #     'disk': {'percent': metric.disk_percent}
-    #     }
-    #     main_window.update_metrics(metrics)
-
     while True:
         try:
             current_time = time.time()
             metrics = system_monitor.collect_metrics()
-            #######processes = process_monitor.monitor_processes()
 
             # Store and update metrics
             db_handler.store_metrics(metrics)
             main_window.update_metrics(metrics)
-            ########main_window.update_process_table(processes)
 
             # Check thresholds and handle alerts
             if metrics['cpu']['cpu_percent'] > config['monitoring']['thresholds']['cpu']:

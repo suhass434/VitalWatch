@@ -1,11 +1,6 @@
+PyQt5
+PyQtChart
+PyYAML
+requests
 psutil
-numpy
-pandas
-scikit-learn
-fastapi
-uvicorn
-sqlalchemy
-pyyaml
-plotly
-streamlit
-pyQt5
+SQLAlchemy
