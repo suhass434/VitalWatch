@@ -53,10 +53,9 @@ class DatabaseHandler:
         
         return backup_file
     
-    def get_historical_metrics(self, limit = 50) {
-        metrics = self.session.query(SystemMetrics)\
-            .order_by(SystemMetrics.timestamp.desc())\
-            .limit(limit)\
-            .all()
-        return metrics
-    }
+    # def get_historical_metrics(self, limit = 25):
+    #     metrics = self.session.query(SystemMetrics)\
+    #         .order_by(SystemMetrics.timestamp.desc())\
+    #         .limit(limit)\
+    #         .all()
+    #     return metrics

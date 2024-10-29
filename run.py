@@ -25,7 +25,7 @@ def load_config():
 def monitoring_task(main_window, config):
     # Initialize monitoring components
     system_monitor = SystemMonitor()
-    process_monitor = ProcessMonitor()
+    #######process_monitor = ProcessMonitor()
     db_handler = DatabaseHandler()
     alert_manager = AlertManager(config)
     recovery_manager = RecoveryManager()
@@ -33,16 +33,26 @@ def monitoring_task(main_window, config):
     last_backup_time = time.time()
     backup_interval = config['database']['backup_interval']
 
+    # #load history data on startup
+    # historical_data = db_handler.get_historical_metrics(25)
+    # for metric in historical_data:
+    #     metrics = {
+    #     'cpu': {'cpu_percent': metric.cpu_percent},
+    #     'memory': {'percent': metric.memory_percent},
+    #     'disk': {'percent': metric.disk_percent}
+    #     }
+    #     main_window.update_metrics(metrics)
+
     while True:
         try:
             current_time = time.time()
             metrics = system_monitor.collect_metrics()
-            processes = process_monitor.monitor_processes()
-            
+            #######processes = process_monitor.monitor_processes()
+
             # Store and update metrics
             db_handler.store_metrics(metrics)
             main_window.update_metrics(metrics)
-            main_window.update_process_table(processes)
+            ########main_window.update_process_table(processes)
 
             # Check thresholds and handle alerts
             if metrics['cpu']['cpu_percent'] > config['monitoring']['thresholds']['cpu']:
@@ -67,6 +77,19 @@ def monitoring_task(main_window, config):
             print(f"Error in monitoring loop: {str(e)}")
             time.sleep(config['monitoring']['interval'])
 
+def process_monitoring_task(main_window, config):
+    process_monitor = ProcessMonitor()
+
+    while True:
+        try:
+            processes = process_monitor.monitor_processes()
+            main_window.update_process_table(processes)
+            time.sleep(config['monitoring']['interval'])
+        
+        except Exception as e:
+            print(f"Error in process monitoring loop: {str(e)}")
+            time.sleep(config['monitoring']['interval'])
+
 def main():
     config = load_config()
     
@@ -87,7 +110,10 @@ def main():
     
     # Start monitoring in background thread
     monitoring_thread = Thread(target=monitoring_task, args=(main_window, config), daemon=True)
+    process_thread = Thread(target=process_monitoring_task, args=(main_window, config), daemon=True)
+    
     monitoring_thread.start()
+    process_thread.start()
 
     # Run the application
     exit_code = app.exec_()

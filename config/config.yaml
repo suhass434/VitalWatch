@@ -5,7 +5,6 @@ monitoring:
     memory: 90
     disk: 85
   process:
-    min_count: 10
     max_count: 100
     sleep: 0.1
 

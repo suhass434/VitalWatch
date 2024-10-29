@@ -1,10 +1,11 @@
-from PyQt5.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, QTabWidget, QPushButton, QLabel, QTableWidget, QTableWidgetItem, QHeaderView)
+from PyQt5.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, QTabWidget, QPushButton, QLabel, QTableWidget, QTableWidgetItem, QHeaderView, QGroupBox, QCheckBox)
 from PyQt5.QtChart import QChart, QChartView, QLineSeries, QValueAxis
 from PyQt5.QtCore import Qt
 from PyQt5.QtGui import QColor, QBrush
 import threading
 from app.gui.styles import STYLE_SHEET
 import yaml
+import sys
 
 class MainWindow(QMainWindow):
     def __init__(self):
@@ -35,21 +36,26 @@ class MainWindow(QMainWindow):
 
     def setup_charts(self):
         chart_theme = {
-        'background': QColor("#2B2B2B"),
-        'text': QColor("#FFFFFF"),
-        'grid': QColor("#3C3F41")
-        }    
+                'background': QColor("#2B2B2B"),
+                'text': QColor("#FFFFFF"),
+                'grid': QColor("#3C3F41"),
+                'cpu_line': QColor("#FF6B6B"),
+                'memory_line': QColor("#4ECDC4"),
+                'disk_line': QColor("#45B7D1")
+            }       
         config = self.load_config()
-        self.min_count = config['monitoring']['process']['min_count']
         self.max_count = config['monitoring']['process']['max_count']
 
-        # CPU Chart
-        self.cpu_series.setColor(QColor("#FF6B6B"))
+        # CPU Chart with enhanced styling
+        self.cpu_series.setColor(chart_theme['cpu_line'])
+        self.cpu_chart.addSeries(self.cpu_series)  
         self.cpu_chart.setBackgroundVisible(True)
         self.cpu_chart.setBackgroundBrush(QBrush(chart_theme['background']))
         self.cpu_chart.setTitleBrush(QBrush(chart_theme['text']))
-        self.cpu_chart.addSeries(self.cpu_series)
         self.cpu_chart.setTitle("CPU Usage %")
+        self.cpu_chart.legend().hide()  # Hide legend for cleaner look
+        self.cpu_chart.setAnimationOptions(QChart.SeriesAnimations)  # Add smooth animations
+        
         axis_x = QValueAxis()
         axis_y = QValueAxis()
         axis_x.setLabelsColor(chart_theme['text'])
@@ -58,6 +64,7 @@ class MainWindow(QMainWindow):
         axis_y.setGridLineColor(chart_theme['grid'])
         axis_x.setRange(0, self.max_data_points)
         axis_y.setRange(0, 100)
+        axis_y.setTickCount(6)  # More readable tick intervals
         self.cpu_chart.addAxis(axis_x, Qt.AlignBottom)
         self.cpu_chart.addAxis(axis_y, Qt.AlignLeft)
         self.cpu_series.attachAxis(axis_x)
@@ -70,6 +77,9 @@ class MainWindow(QMainWindow):
         self.memory_chart.setTitleBrush(QBrush(chart_theme['text']))    
         self.memory_chart.addSeries(self.memory_series)
         self.memory_chart.setTitle("Memory Usage %")
+        self.memory_chart.legend().hide()
+        self.memory_chart.setAnimationOptions(QChart.SeriesAnimations)
+
         memory_x = QValueAxis()
         memory_y = QValueAxis()
         memory_x.setLabelsColor(chart_theme['text'])
@@ -78,6 +88,7 @@ class MainWindow(QMainWindow):
         memory_y.setGridLineColor(chart_theme['grid'])        
         memory_x.setRange(0, self.max_data_points)
         memory_y.setRange(0, 100)
+        axis_y.setTickCount(6)
         self.memory_chart.addAxis(memory_x, Qt.AlignBottom)
         self.memory_chart.addAxis(memory_y, Qt.AlignLeft)
         self.memory_series.attachAxis(memory_x)
@@ -116,10 +127,10 @@ class MainWindow(QMainWindow):
         tabs = QTabWidget()
         layout.addWidget(tabs)
         
+
         # overview tab
         overview_widget = QWidget()
         overview_layout = QGridLayout(overview_widget)
-
         # Add labels to overview tab
         overview_layout.addWidget(self.cpu_label, 0, 0)
         overview_layout.addWidget(QChartView(self.cpu_chart), 1, 0)
@@ -129,10 +140,10 @@ class MainWindow(QMainWindow):
         overview_layout.addWidget(QChartView(self.disk_chart), 3, 0)        
         tabs.addTab(overview_widget, "Overview")
 
+
         # Processes tab
         processes_widget = QWidget()
         processes_layout = QVBoxLayout(processes_widget)        
-        
         # Add Show All/Show Less button
         button_container = QWidget()
         button_layout = QHBoxLayout(button_container)
@@ -144,12 +155,10 @@ class MainWindow(QMainWindow):
         self.show_all_processes = False
         button_layout.addWidget(self.show_all_button)
         processes_layout.addWidget(button_container)
-
         # Create table widget for processes
         self.process_table = QTableWidget()
         self.process_table.setColumnCount(4)
         self.process_table.setHorizontalHeaderLabels(['Process Name', 'PID', 'CPU %', 'Memory %'])
-    
         # Set column stretching
         header = self.process_table.horizontalHeader()
         header.setSectionResizeMode(0, QHeaderView.Stretch)
@@ -158,6 +167,25 @@ class MainWindow(QMainWindow):
 
         processes_layout.addWidget(self.process_table)
         tabs.addTab(processes_widget, "Processes")        
+
+
+        #Settings tab
+        settings_widget = QWidget()
+        settings_layout = QVBoxLayout(settings_widget)
+        #background running option
+        background_group = QGroupBox("Background Running")
+        background_layout = QVBoxLayout()
+
+        self.background_checkbox = QCheckBox("Run in background")
+        self.background_checkbox.setChecked(True)
+
+        background_layout.addWidget(self.background_checkbox)
+        background_group.setLayout(background_layout)
+        settings_layout.addWidget(background_group)
+        settings_layout.addStretch()
+    
+        tabs.addTab(settings_widget, "Settings")
+
 
     def toggle_process_view(self):
         self.show_all_processes = not self.show_all_processes
@@ -180,6 +208,9 @@ class MainWindow(QMainWindow):
             self.cpu_series.remove(0)
             self.memory_series.remove(0)
             self.disk_series.remove(0)
+            
+            for chart in [self.cpu_chart, self.memory_chart, self.disk_chart]:
+                chart.axes(Qt.Horizontal)[0].setRange(self.data_points - self.max_data_points, self.data_points)
 
         self.data_points += 1
 
@@ -187,11 +218,16 @@ class MainWindow(QMainWindow):
         if not self.isVisible():
             return        
         self.current_processes = processes
+
+        self.process_table.setUpdatesEnabled(False)
         sorted_processes = sorted(processes, key=lambda x: float(x['cpu_percent']), reverse=True)
-        display_processes = sorted_processes[:self.max_count] if self.show_all_processes else sorted_processes[:self.min_count]
-        
-        # Update table
-        
+        if self.show_all_processes:
+            display_processes = sorted_processes[:100]
+        else:
+            display_processes = [p for p in sorted_processes if float(p['cpu_percent']) > 0]
+        self.process_table.setUpdatesEnabled(True)   
+
+        # Update table        
         self.process_table.setRowCount(len(display_processes))
         for row, process in enumerate(display_processes):
             self.process_table.setItem(row, 0, QTableWidgetItem(process['name']))
@@ -200,6 +236,10 @@ class MainWindow(QMainWindow):
             self.process_table.setItem(row, 3, QTableWidgetItem(f"{process['memory_percent']:.1f}"))        
 
     def closeEvent(self, event):
-        # Minimize to tray instead of closing
-        event.ignore()
-        self.hide()
+        if self.background_checkbox.isChecked():
+            # Minimize to tray instead of closing
+            event.ignore()
+            self.hide()
+        else:
+            event.accept()
+            sys.exit(0)        
