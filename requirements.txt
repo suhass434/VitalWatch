@@ -4,3 +4,5 @@ PyYAML
 requests
 psutil
 SQLAlchemy
+gputil
+setuptools

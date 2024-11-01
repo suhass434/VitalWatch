@@ -14,11 +14,15 @@ class MainWindow(QMainWindow):
         self.cpu_label = QLabel("CPU Usage: --")
         self.memory_label = QLabel("Memory Usage: --")
         self.disk_label = QLabel("Disk Usage: --")
-        
+        self.network_label = QLabel("Network Usage: --")
+        self.gpu_label = QLabel("GPU Usage: --")
+
         # Initialize data series for graphs
         self.cpu_series = QLineSeries()
         self.memory_series = QLineSeries()
         self.disk_series = QLineSeries()
+        self.network_series = QLineSeries()
+        self.gpu_series = QLineSeries()
         self.data_points = 0
         self.max_data_points = 50
 
@@ -26,6 +30,8 @@ class MainWindow(QMainWindow):
         self.cpu_chart = QChart()
         self.memory_chart = QChart()
         self.disk_chart = QChart()
+        self.network_chart = QChart()
+        self.gpu_chart = QChart()
         
         self.setup_charts()
         self.setup_ui()        
@@ -42,7 +48,8 @@ class MainWindow(QMainWindow):
                 'cpu_line': QColor("#FF6B6B"),
                 'memory_line': QColor("#FF6B6B"),#"#4ECDC4"
                 'disk_line': QColor("#FF6B6B"),
-                'fill_color': QColor("#FF6B6B").lighter(170) 
+                'gpu_line': QColor("#FF6B6B")
+                #'fill_color': QColor("#FF6B6B").lighter(170) 
             }       
         config = self.load_config()
         self.max_count = config['monitoring']['process']['max_count']
@@ -130,6 +137,33 @@ class MainWindow(QMainWindow):
         disk_pen.setWidth(config['gui']['pen_thickness'])
         self.disk_series.setPen(disk_pen)
 
+        #Gpu Usage Chart
+        self.gpu_series.setColor(QColor("#FF6B6B"))
+        self.gpu_chart.setBackgroundVisible(True)
+        self.gpu_chart.setBackgroundBrush(QBrush(chart_theme['background']))
+        self.gpu_chart.setTitleBrush(QBrush(chart_theme['text']))    
+        self.gpu_chart.addSeries(self.gpu_series)
+        self.gpu_chart.setTitle("Gpu Usage %")
+        self.gpu_chart.legend().hide()
+        self.gpu_chart.setAnimationOptions(QChart.SeriesAnimations)
+
+        gpu_x = QValueAxis()
+        gpu_y = QValueAxis()
+        gpu_x.setLabelsVisible(False)
+        gpu_x.setLabelsColor(chart_theme['text'])
+        gpu_y.setLabelsColor(chart_theme['text'])
+        gpu_x.setGridLineColor(chart_theme['grid'])
+        gpu_y.setGridLineColor(chart_theme['grid'])        
+        gpu_x.setRange(0, self.max_data_points)
+        gpu_y.setRange(0, 100)
+        self.gpu_chart.addAxis(gpu_x, Qt.AlignBottom)
+        self.gpu_chart.addAxis(gpu_y, Qt.AlignLeft)
+        self.gpu_series.attachAxis(gpu_x)
+        self.gpu_series.attachAxis(gpu_y)
+        gpu_pen = QPen(chart_theme['gpu_line'])
+        gpu_pen.setWidth(config['gui']['pen_thickness'])
+        self.gpu_series.setPen(gpu_pen)        
+
     def setup_ui(self):
         self.setWindowTitle("AutoGuard")
         self.setMinimumSize(800, 600)
@@ -154,9 +188,10 @@ class MainWindow(QMainWindow):
         overview_layout.addWidget(self.memory_label, 0, 1)
         overview_layout.addWidget(QChartView(self.memory_chart), 1, 1)
         overview_layout.addWidget(self.disk_label, 2, 0)
-        overview_layout.addWidget(QChartView(self.disk_chart), 3, 0)        
+        overview_layout.addWidget(QChartView(self.disk_chart), 3, 0)
+        overview_layout.addWidget(self.gpu_label, 2, 1)
+        overview_layout.addWidget(QChartView(self.gpu_chart), 3, 1)        
         tabs.addTab(overview_widget, "Overview")
-
 
         # Processes tab
         processes_widget = QWidget()
@@ -218,18 +253,21 @@ class MainWindow(QMainWindow):
         self.cpu_label.setText(f"CPU Usage: {metrics['cpu']['cpu_percent']}%")
         self.memory_label.setText(f"Memory Usage: {metrics['memory']['percent']}%")
         self.disk_label.setText(f"Disk Usage: {metrics['disk']['percent']}%")
+        self.network_label.setText(f"Network Usage: {metrics['network']['upload_speed']}kb")
         
         # Update graph data
         self.cpu_series.append(self.data_points, metrics['cpu']['cpu_percent'])
         self.memory_series.append(self.data_points, metrics['memory']['percent'])
         self.disk_series.append(self.data_points, metrics['disk']['percent'])
-
+        self.network_series.append(self.data_points, metrics['network']['upload_speed'])
+        
         if self.data_points >= self.max_data_points:
             self.cpu_series.remove(0)
             self.memory_series.remove(0)
             self.disk_series.remove(0)
+            self.network_series.remove(0)
             
-            for chart in [self.cpu_chart, self.memory_chart, self.disk_chart]:
+            for chart in [self.cpu_chart, self.memory_chart, self.disk_chart, self.network_chart]:
                 chart.axes(Qt.Horizontal)[0].setRange(self.data_points - self.max_data_points, self.data_points)
         self.data_points += 1
 
@@ -241,6 +279,7 @@ class MainWindow(QMainWindow):
         self.process_table.setUpdatesEnabled(False)
         sorted_processes = sorted(processes, key=lambda x: float(x['cpu_percent']), reverse=True)
         if self.show_all_processes:
+
             display_processes = sorted_processes[:100]
         else:
             display_processes = [p for p in sorted_processes if float(p['cpu_percent']) > 0]

@@ -25,7 +25,6 @@ def load_config():
 def monitoring_task(main_window, config):
     # Initialize monitoring components
     system_monitor = SystemMonitor()
-    #######process_monitor = ProcessMonitor()
     db_handler = DatabaseHandler()
     alert_manager = AlertManager(config)
     recovery_manager = RecoveryManager()

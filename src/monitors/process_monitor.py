@@ -1,6 +1,7 @@
 import psutil
 import time
 import yaml
+from datetime import datetime
 
 class ProcessMonitor:
     def __init__(self):
@@ -14,13 +15,14 @@ class ProcessMonitor:
         try:
             config = self.load_config()
             time.sleep(config['monitoring']['process']['sleep'])
+            create_time = datetime.fromtimestamp(process.create_time()).strftime('%d/%m/%Y %H:%M:%Sf')
             return {
                 'pid': process.pid,
                 'name': process.name(),
                 'status': process.status(),
                 'cpu_percent': process.cpu_percent(),
                 'memory_percent': process.memory_percent(),
-                'create_time': process.create_time()
+                'create_time': create_time
             }
         except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
                 return None
