@@ -12,17 +12,17 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.current_processes = []
         self.cpu_label = QLabel("CPU Usage: --")
+        self.cpu_temp_label = QLabel("Cpu Temperature: --")
         self.memory_label = QLabel("Memory Usage: --")
         self.disk_label = QLabel("Disk Usage: --")
         self.network_label = QLabel("Network Usage: --")
-        self.gpu_label = QLabel("GPU Usage: --")
 
         # Initialize data series for graphs
         self.cpu_series = QLineSeries()
         self.memory_series = QLineSeries()
         self.disk_series = QLineSeries()
         self.network_series = QLineSeries()
-        self.gpu_series = QLineSeries()
+        self.cpu_temp_series = QLineSeries()
         self.data_points = 0
         self.max_data_points = 50
 
@@ -31,7 +31,7 @@ class MainWindow(QMainWindow):
         self.memory_chart = QChart()
         self.disk_chart = QChart()
         self.network_chart = QChart()
-        self.gpu_chart = QChart()
+        self.cpu_temp_chart = QChart()
         
         self.setup_charts()
         self.setup_ui()        
@@ -48,7 +48,7 @@ class MainWindow(QMainWindow):
                 'cpu_line': QColor("#FF6B6B"),
                 'memory_line': QColor("#FF6B6B"),#"#4ECDC4"
                 'disk_line': QColor("#FF6B6B"),
-                'gpu_line': QColor("#FF6B6B")
+                'cpu_temp_line': QColor("#FF6B6B")
                 #'fill_color': QColor("#FF6B6B").lighter(170) 
             }       
         config = self.load_config()
@@ -137,34 +137,34 @@ class MainWindow(QMainWindow):
         disk_pen.setWidth(config['gui']['pen_thickness'])
         self.disk_series.setPen(disk_pen)
 
-        #Gpu Usage Chart
-        self.gpu_series.setColor(QColor("#FF6B6B"))
-        self.gpu_chart.setBackgroundVisible(True)
-        self.gpu_chart.setBackgroundBrush(QBrush(chart_theme['background']))
-        self.gpu_chart.setTitleBrush(QBrush(chart_theme['text']))    
-        self.gpu_chart.addSeries(self.gpu_series)
-        self.gpu_chart.setTitle("Gpu Usage %")
-        self.gpu_chart.legend().hide()
-        self.gpu_chart.setAnimationOptions(QChart.SeriesAnimations)
+        #cpu_temp Chart
+        self.cpu_temp_series.setColor(QColor("#FF6B6B"))
+        self.cpu_temp_chart.setBackgroundVisible(True)
+        self.cpu_temp_chart.setBackgroundBrush(QBrush(chart_theme['background']))
+        self.cpu_temp_chart.setTitleBrush(QBrush(chart_theme['text']))    
+        self.cpu_temp_chart.addSeries(self.cpu_temp_series)
+        self.cpu_temp_chart.setTitle("Cpu Temperature")
+        self.cpu_temp_chart.legend().hide()
+        self.cpu_temp_chart.setAnimationOptions(QChart.SeriesAnimations)
 
-        gpu_x = QValueAxis()
-        gpu_y = QValueAxis()
-        gpu_x.setLabelsVisible(False)
-        gpu_x.setLabelsColor(chart_theme['text'])
-        gpu_y.setLabelsColor(chart_theme['text'])
-        gpu_x.setGridLineColor(chart_theme['grid'])
-        gpu_y.setGridLineColor(chart_theme['grid'])        
-        gpu_x.setRange(0, self.max_data_points)
-        gpu_y.setRange(0, 100)
-        self.gpu_chart.addAxis(gpu_x, Qt.AlignBottom)
-        self.gpu_chart.addAxis(gpu_y, Qt.AlignLeft)
-        self.gpu_series.attachAxis(gpu_x)
-        self.gpu_series.attachAxis(gpu_y)
-        gpu_pen = QPen(chart_theme['gpu_line'])
-        gpu_pen.setWidth(config['gui']['pen_thickness'])
-        self.gpu_series.setPen(gpu_pen)        
+        cpu_temp_x = QValueAxis()
+        cpu_temp_y = QValueAxis()
+        cpu_temp_x.setLabelsVisible(False)
+        cpu_temp_x.setLabelsColor(chart_theme['text'])
+        cpu_temp_y.setLabelsColor(chart_theme['text'])
+        cpu_temp_x.setGridLineColor(chart_theme['grid'])
+        cpu_temp_y.setGridLineColor(chart_theme['grid'])        
+        cpu_temp_x.setRange(0, self.max_data_points)
+        cpu_temp_y.setRange(0, 100)
+        self.cpu_temp_chart.addAxis(cpu_temp_x, Qt.AlignBottom)
+        self.cpu_temp_chart.addAxis(cpu_temp_y, Qt.AlignLeft)
+        self.cpu_temp_series.attachAxis(cpu_temp_x)
+        self.cpu_temp_series.attachAxis(cpu_temp_y)
+        cpu_temp_pen = QPen(chart_theme['cpu_temp_line'])
+        cpu_temp_pen.setWidth(config['gui']['pen_thickness'])
+        self.cpu_temp_series.setPen(cpu_temp_pen)        
 
-    def setup_ui(self):
+    def setup_ui(self): 
         self.setWindowTitle("AutoGuard")
         self.setMinimumSize(800, 600)
         
@@ -189,8 +189,8 @@ class MainWindow(QMainWindow):
         overview_layout.addWidget(QChartView(self.memory_chart), 1, 1)
         overview_layout.addWidget(self.disk_label, 2, 0)
         overview_layout.addWidget(QChartView(self.disk_chart), 3, 0)
-        overview_layout.addWidget(self.gpu_label, 2, 1)
-        overview_layout.addWidget(QChartView(self.gpu_chart), 3, 1)        
+        overview_layout.addWidget(self.cpu_temp_label, 2, 1)
+        overview_layout.addWidget(QChartView(self.cpu_temp_chart), 3, 1)        
         tabs.addTab(overview_widget, "Overview")
 
         # Processes tab
@@ -254,20 +254,23 @@ class MainWindow(QMainWindow):
         self.memory_label.setText(f"Memory Usage: {metrics['memory']['percent']}%")
         self.disk_label.setText(f"Disk Usage: {metrics['disk']['percent']}%")
         self.network_label.setText(f"Network Usage: {metrics['network']['upload_speed']}kb")
+        self.cpu_temp_label.setText(f"Cpu Temperature Usage: {metrics['cpu_load']['cpu_temp']}C")
         
         # Update graph data
         self.cpu_series.append(self.data_points, metrics['cpu']['cpu_percent'])
         self.memory_series.append(self.data_points, metrics['memory']['percent'])
         self.disk_series.append(self.data_points, metrics['disk']['percent'])
         self.network_series.append(self.data_points, metrics['network']['upload_speed'])
-        
+        self.cpu_temp_series.append(self.data_points, metrics['cpu_load']['cpu_temp'])
+
         if self.data_points >= self.max_data_points:
             self.cpu_series.remove(0)
             self.memory_series.remove(0)
             self.disk_series.remove(0)
             self.network_series.remove(0)
+            self.cpu_temp_series.remove(0)
             
-            for chart in [self.cpu_chart, self.memory_chart, self.disk_chart, self.network_chart]:
+            for chart in [self.cpu_chart, self.memory_chart, self.disk_chart, self.cpu_temp_chart]:
                 chart.axes(Qt.Horizontal)[0].setRange(self.data_points - self.max_data_points, self.data_points)
         self.data_points += 1
 

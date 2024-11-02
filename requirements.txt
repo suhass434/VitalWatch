@@ -4,5 +4,6 @@ PyYAML
 requests
 psutil
 SQLAlchemy
-gputil
-setuptools
+# gputil
+# setuptools
+nvidia-ml-py3

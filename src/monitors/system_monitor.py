@@ -1,7 +1,7 @@
 import psutil
 import time
 from datetime import datetime
-import GPUtil
+import pynvml
 
 class SystemMonitor:
     def __init__(self):
@@ -50,17 +50,24 @@ class SystemMonitor:
         }
 
     def get_gpu_metrics(self):
-        gpus = GPUtil.getGPUs()
-        if not gpus:
-            print("No GPU found.")
-            return None  # Return None if no GPU is available
-        gpu = gpus[0]  # Using the first GPU for simplicity
+        pynvml.nvmlInit()
+        handle = pynvml.nvmlDeviceGetHandleByIndex(0)
         return {
-            'gpu_load': gpu.load * 100,        # Load as a percentage
-            'gpu_memory_total': gpu.memoryTotal,  # Total GPU memory
-            'gpu_memory_used': gpu.memoryUsed,    # Used GPU memory
-            'gpu_memory_free': gpu.memoryFree,    # Free GPU memory
-            'gpu_temperature': gpu.temperature    # GPU temperature
+            'gpu_load': pynvml.nvmlDeviceGetUtilizationRates(handle).gpu,
+            'gpu_memory_total': pynvml.nvmlDeviceGetMemoryInfo(handle).total,
+            'gpu_memory_used': pynvml.nvmlDeviceGetMemoryInfo(handle).used,
+            'gpu_memory_free': pynvml.nvmlDeviceGetMemoryInfo(handle).free,
+            'gpu_temperature': pynvml.nvmlDeviceGetTemperature(handle, pynvml.NVML_TEMPERATURE_GPU)
+        }
+
+    def get_cpu_load(self):
+        cpu_load = psutil.cpu_percent(interval=1)        
+        temps = psutil.sensors_temperatures()
+        cpu_temp = temps['coretemp'][0].current if 'coretemp' in temps else None
+        print(cpu_temp)
+        return {
+            'cpu_load': cpu_load , 
+            'cpu_temp': cpu_temp
         }
 
     def collect_metrics(self):
@@ -70,6 +77,6 @@ class SystemMonitor:
             'memory': self.get_memory_metrics(),
             'disk': self.get_disk_metrics(),
             'network': self.get_network_metrics(),
-            'gpu': self.get_gpu_metrics()
+            'cpu_load': self.get_cpu_load()
         }
         return self.metrics
