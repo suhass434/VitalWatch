@@ -8,10 +8,21 @@ class SystemMonitor:
         self.matrix = {}
 
     def get_cpu_metrics(self):
+        temps = psutil.sensors_temperatures()
+        cpu_temp = temps['coretemp'][0].current if 'coretemp' in temps else None
         return {
-            'cpu_percent': psutil.cpu_percent(interval=1),
-            'cpu_freq': psutil.cpu_freq().current,
-            'cpu_count': psutil.cpu_count(),
+            'cpu_percent': psutil.cpu_percent(interval=1),  # Overall CPU usage as an integer
+            'cpu_temp': cpu_temp,
+            'cpu_freq': int(psutil.cpu_freq().current) if psutil.cpu_freq() else None,  # Current frequency
+            'cpu_count_logical': psutil.cpu_count(logical=True),  # Logical core count
+            'cpu_count_physical': psutil.cpu_count(logical=False),  # Physical core count
+            'cpu_load_avg_1min': int(psutil.getloadavg()[0]) if hasattr(psutil, 'getloadavg') else None,  # Load avg (1 min)
+            'cpu_context_switches': psutil.cpu_stats().ctx_switches,  # Context switches
+            'cpu_interrupts': psutil.cpu_stats().interrupts,  # Interrupts
+            'cpu_syscalls': psutil.cpu_stats().syscalls,  # System calls
+            'cpu_user_time': int(psutil.cpu_times().user),  # User time in seconds
+            'cpu_system_time': int(psutil.cpu_times().system),  # System time in seconds
+            'cpu_idle_time': int(psutil.cpu_times().idle)  # Idle time in seconds
         }
 
     def get_memory_metrics(self):
@@ -64,7 +75,7 @@ class SystemMonitor:
         cpu_load = psutil.cpu_percent(interval=1)        
         temps = psutil.sensors_temperatures()
         cpu_temp = temps['coretemp'][0].current if 'coretemp' in temps else None
-        print(cpu_temp)
+
         return {
             'cpu_load': cpu_load , 
             'cpu_temp': cpu_temp

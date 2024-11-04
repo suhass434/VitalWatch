@@ -10,9 +10,24 @@ import sys
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
+        
+        #Cpu
+        self.cpu_percent = QLabel("CPU Usage: --")
+        self.cpu_temp_label = QLabel("CPU Temperature: --")
+        self.cpu_freq_label = QLabel("CPU Frequency: --")
+        self.cpu_count_logical = QLabel("Logical Cores: --")
+        self.cpu_count_physical = QLabel("Physical Cores: --")
+        self.cpu_load_label = QLabel("CPU Load Avg (1min): --")
+        self.cpu_context_switches_label = QLabel("Context Switches: --")
+        self.cpu_interrupts_label = QLabel("Interrupts: --")
+        self.cpu_syscalls_label = QLabel("System Calls: --")
+        self.cpu_user_label = QLabel(f"User Time: --")
+        self.cpu_system_label = QLabel(f"System Time: --")
+        self.cpu_idle_label = QLabel("Idle Time: --")
+
+        self.cpu_percent2 = QLabel("CPU Usage: --")
+        self.cpu_temp_label2 = QLabel("CPU Temperature: --")
         self.current_processes = []
-        self.cpu_label = QLabel("CPU Usage: --")
-        self.cpu_temp_label = QLabel("Cpu Temperature: --")
         self.memory_label = QLabel("Memory Usage: --")
         self.disk_label = QLabel("Disk Usage: --")
         self.network_label = QLabel("Network Usage: --")
@@ -143,7 +158,7 @@ class MainWindow(QMainWindow):
         self.cpu_temp_chart.setBackgroundBrush(QBrush(chart_theme['background']))
         self.cpu_temp_chart.setTitleBrush(QBrush(chart_theme['text']))    
         self.cpu_temp_chart.addSeries(self.cpu_temp_series)
-        self.cpu_temp_chart.setTitle("Cpu Temperature")
+        self.cpu_temp_chart.setTitle("Cpu Temperature \u00B0C")
         self.cpu_temp_chart.legend().hide()
         self.cpu_temp_chart.setAnimationOptions(QChart.SeriesAnimations)
 
@@ -177,20 +192,20 @@ class MainWindow(QMainWindow):
         tabs = QTabWidget()
         layout.addWidget(tabs)
         
-
         # overview tab
         overview_widget = QWidget()
         overview_layout = QGridLayout(overview_widget)
 
         # Add labels to overview tab
-        overview_layout.addWidget(self.cpu_label, 0, 0)
+        overview_layout.addWidget(self.cpu_percent, 0, 0)
         overview_layout.addWidget(QChartView(self.cpu_chart), 1, 0)
-        overview_layout.addWidget(self.memory_label, 0, 1)
-        overview_layout.addWidget(QChartView(self.memory_chart), 1, 1)
-        overview_layout.addWidget(self.disk_label, 2, 0)
-        overview_layout.addWidget(QChartView(self.disk_chart), 3, 0)
-        overview_layout.addWidget(self.cpu_temp_label, 2, 1)
-        overview_layout.addWidget(QChartView(self.cpu_temp_chart), 3, 1)        
+        overview_layout.addWidget(self.cpu_temp_label, 0, 1)
+        overview_layout.addWidget(QChartView(self.cpu_temp_chart), 1, 1)
+        overview_layout.addWidget(self.memory_label, 2, 0)
+        overview_layout.addWidget(QChartView(self.memory_chart), 3, 0)
+        overview_layout.addWidget(self.disk_label, 2, 1)
+        overview_layout.addWidget(QChartView(self.disk_chart), 3, 1)
+        
         tabs.addTab(overview_widget, "Overview")
 
         # Processes tab
@@ -223,6 +238,25 @@ class MainWindow(QMainWindow):
         processes_layout.addWidget(self.process_table)
         tabs.addTab(processes_widget, "Processes")        
 
+        # Cpu details tab
+        cpu_widget = QWidget()
+        cpu_layout = QVBoxLayout(cpu_widget)  
+
+        cpu_layout.addWidget(self.cpu_percent2)
+        cpu_layout.addWidget(self.cpu_temp_label2)
+        cpu_layout.addWidget(self.cpu_freq_label)
+        cpu_layout.addWidget(self.cpu_count_logical)
+        cpu_layout.addWidget(self.cpu_count_physical)
+        cpu_layout.addWidget(self.cpu_load_label)
+        cpu_layout.addWidget(self.cpu_context_switches_label)
+        cpu_layout.addWidget(self.cpu_interrupts_label)
+        cpu_layout.addWidget(self.cpu_syscalls_label)
+        cpu_layout.addWidget(self.cpu_user_label)
+        cpu_layout.addWidget(self.cpu_system_label)
+        cpu_layout.addWidget(self.cpu_idle_label)
+        cpu_layout.addStretch()
+
+        tabs.addTab(cpu_widget, "CPU Details")
 
         #Settings tab
         settings_widget = QWidget()
@@ -250,12 +284,12 @@ class MainWindow(QMainWindow):
 
     def update_metrics(self, metrics):
         # Update labels
-        self.cpu_label.setText(f"CPU Usage: {metrics['cpu']['cpu_percent']}%")
         self.memory_label.setText(f"Memory Usage: {metrics['memory']['percent']}%")
         self.disk_label.setText(f"Disk Usage: {metrics['disk']['percent']}%")
         self.network_label.setText(f"Network Usage: {metrics['network']['upload_speed']}kb")
-        self.cpu_temp_label.setText(f"Cpu Temperature Usage: {metrics['cpu_load']['cpu_temp']}C")
-        
+        self.cpu_percent.setText(f"CPU Usage: {metrics['cpu']['cpu_percent']}%")
+        self.cpu_temp_label.setText(f"CPU Temperature: {metrics['cpu']['cpu_temp']}\u00B0C")
+
         # Update graph data
         self.cpu_series.append(self.data_points, metrics['cpu']['cpu_percent'])
         self.memory_series.append(self.data_points, metrics['memory']['percent'])
@@ -263,7 +297,21 @@ class MainWindow(QMainWindow):
         self.network_series.append(self.data_points, metrics['network']['upload_speed'])
         self.cpu_temp_series.append(self.data_points, metrics['cpu_load']['cpu_temp'])
 
-        if self.data_points >= self.max_data_points:
+        # Update cpu tab
+        self.cpu_percent2.setText(f"CPU Usage: {metrics['cpu']['cpu_percent']}%")
+        self.cpu_temp_label2.setText(f"CPU Temperature: {metrics['cpu']['cpu_temp']}\u00B0C")
+        self.cpu_freq_label.setText(f"CPU Frequency: {metrics['cpu']['cpu_freq']} MHz")
+        self.cpu_count_logical.setText(f"Logical Cores: {metrics['cpu']['cpu_count_logical']}")
+        self.cpu_count_physical.setText(f"Physical Cores: {metrics['cpu']['cpu_count_physical']}")
+        self.cpu_load_label.setText(f"CPU Load Avg (1min): {metrics['cpu']['cpu_load_avg_1min']}")
+        self.cpu_context_switches_label.setText(f"Context Switches: {metrics['cpu']['cpu_context_switches']}")
+        self.cpu_interrupts_label.setText(f"Interrupts: {metrics['cpu']['cpu_interrupts']}")
+        self.cpu_syscalls_label.setText(f"System Calls: {metrics['cpu']['cpu_syscalls']}")
+        self.cpu_user_label.setText(f"User Time: {metrics['cpu']['cpu_user_time']}s")
+        self.cpu_system_label.setText(f"System Time: {metrics['cpu']['cpu_system_time']}s")
+        self.cpu_idle_label.setText(f"Idle Time: {metrics['cpu']['cpu_idle_time']}s")
+
+        if self.data_points > self.max_data_points:
             self.cpu_series.remove(0)
             self.memory_series.remove(0)
             self.disk_series.remove(0)
