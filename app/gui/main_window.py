@@ -10,23 +10,9 @@ import sys
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        
-        #Cpu
-        self.cpu_percent = QLabel("CPU Usage: --")
-        self.cpu_temp_label = QLabel("CPU Temperature: --")
-        self.cpu_freq_label = QLabel("CPU Frequency: --")
-        self.cpu_count_logical = QLabel("Logical Cores: --")
-        self.cpu_count_physical = QLabel("Physical Cores: --")
-        self.cpu_load_label = QLabel("CPU Load Avg (1min): --")
-        self.cpu_context_switches_label = QLabel("Context Switches: --")
-        self.cpu_interrupts_label = QLabel("Interrupts: --")
-        self.cpu_syscalls_label = QLabel("System Calls: --")
-        self.cpu_user_label = QLabel(f"User Time: --")
-        self.cpu_system_label = QLabel(f"System Time: --")
-        self.cpu_idle_label = QLabel("Idle Time: --")
-
-        self.cpu_percent2 = QLabel("CPU Usage: --")
-        self.cpu_temp_label2 = QLabel("CPU Temperature: --")
+        #overview label initialization
+        self.cpu_percent = QLabel("Cpu percent:--")
+        self.cpu_temp_label = QLabel("--")
         self.current_processes = []
         self.memory_label = QLabel("Memory Usage: --")
         self.disk_label = QLabel("Disk Usage: --")
@@ -63,13 +49,13 @@ class MainWindow(QMainWindow):
                 'cpu_line': QColor("#FF6B6B"),
                 'memory_line': QColor("#FF6B6B"),#"#4ECDC4"
                 'disk_line': QColor("#FF6B6B"),
-                'cpu_temp_line': QColor("#FF6B6B")
+                'network_line': QColor("#FF6B6B")
                 #'fill_color': QColor("#FF6B6B").lighter(170) 
             }       
         config = self.load_config()
         self.max_count = config['monitoring']['process']['max_count']
 
-        # CPU Chart with enhanced styling
+        # CPU Chart
         self.cpu_series.setColor(chart_theme['cpu_line'])
         self.cpu_chart.addSeries(self.cpu_series)  
         self.cpu_chart.setBackgroundVisible(True)
@@ -152,32 +138,33 @@ class MainWindow(QMainWindow):
         disk_pen.setWidth(config['gui']['pen_thickness'])
         self.disk_series.setPen(disk_pen)
 
-        #cpu_temp Chart
-        self.cpu_temp_series.setColor(QColor("#FF6B6B"))
-        self.cpu_temp_chart.setBackgroundVisible(True)
-        self.cpu_temp_chart.setBackgroundBrush(QBrush(chart_theme['background']))
-        self.cpu_temp_chart.setTitleBrush(QBrush(chart_theme['text']))    
-        self.cpu_temp_chart.addSeries(self.cpu_temp_series)
-        self.cpu_temp_chart.setTitle("Cpu Temperature \u00B0C")
-        self.cpu_temp_chart.legend().hide()
-        self.cpu_temp_chart.setAnimationOptions(QChart.SeriesAnimations)
+        #network Chart
+        self.max_network_value = 100
+        self.network_series.setColor(QColor("#FF6B6B"))
+        self.network_chart.setBackgroundVisible(True)
+        self.network_chart.setBackgroundBrush(QBrush(chart_theme['background']))
+        self.network_chart.setTitleBrush(QBrush(chart_theme['text']))    
+        self.network_chart.addSeries(self.network_series)
+        self.network_chart.setTitle("Network Usage Kbps")
+        self.network_chart.legend().hide()
+        self.network_chart.setAnimationOptions(QChart.SeriesAnimations)
 
-        cpu_temp_x = QValueAxis()
-        cpu_temp_y = QValueAxis()
-        cpu_temp_x.setLabelsVisible(False)
-        cpu_temp_x.setLabelsColor(chart_theme['text'])
-        cpu_temp_y.setLabelsColor(chart_theme['text'])
-        cpu_temp_x.setGridLineColor(chart_theme['grid'])
-        cpu_temp_y.setGridLineColor(chart_theme['grid'])        
-        cpu_temp_x.setRange(0, self.max_data_points)
-        cpu_temp_y.setRange(0, 100)
-        self.cpu_temp_chart.addAxis(cpu_temp_x, Qt.AlignBottom)
-        self.cpu_temp_chart.addAxis(cpu_temp_y, Qt.AlignLeft)
-        self.cpu_temp_series.attachAxis(cpu_temp_x)
-        self.cpu_temp_series.attachAxis(cpu_temp_y)
-        cpu_temp_pen = QPen(chart_theme['cpu_temp_line'])
-        cpu_temp_pen.setWidth(config['gui']['pen_thickness'])
-        self.cpu_temp_series.setPen(cpu_temp_pen)        
+        network_x = QValueAxis()
+        self.network_y = QValueAxis()
+        network_x.setLabelsVisible(False)
+        network_x.setLabelsColor(chart_theme['text'])
+        self.network_y.setLabelsColor(chart_theme['text'])
+        network_x.setGridLineColor(chart_theme['grid'])
+        self.network_y.setGridLineColor(chart_theme['grid'])        
+        network_x.setRange(0, self.max_data_points)
+        self.network_y.setRange(0, self.max_network_value)
+        self.network_chart.addAxis(network_x, Qt.AlignBottom)
+        self.network_chart.addAxis(self.network_y, Qt.AlignLeft)
+        self.network_series.attachAxis(network_x)
+        self.network_series.attachAxis(self.network_y)
+        network_pen = QPen(chart_theme['network_line'])
+        network_pen.setWidth(config['gui']['pen_thickness'])
+        self.network_series.setPen(network_pen)        
 
     def setup_ui(self): 
         self.setWindowTitle("AutoGuard")
@@ -199,14 +186,14 @@ class MainWindow(QMainWindow):
         # Add labels to overview tab
         overview_layout.addWidget(self.cpu_percent, 0, 0)
         overview_layout.addWidget(QChartView(self.cpu_chart), 1, 0)
-        overview_layout.addWidget(self.cpu_temp_label, 0, 1)
-        overview_layout.addWidget(QChartView(self.cpu_temp_chart), 1, 1)
-        overview_layout.addWidget(self.memory_label, 2, 0)
-        overview_layout.addWidget(QChartView(self.memory_chart), 3, 0)
-        overview_layout.addWidget(self.disk_label, 2, 1)
-        overview_layout.addWidget(QChartView(self.disk_chart), 3, 1)
-        
+        overview_layout.addWidget(self.memory_label, 0, 1)
+        overview_layout.addWidget(QChartView(self.memory_chart), 1, 1)
+        overview_layout.addWidget(self.disk_label, 2, 0)
+        overview_layout.addWidget(QChartView(self.disk_chart), 3, 0)        
+        overview_layout.addWidget(self.network_label, 2, 1)
+        overview_layout.addWidget(QChartView(self.network_chart), 3, 1)        
         tabs.addTab(overview_widget, "Overview")
+
 
         # Processes tab
         processes_widget = QWidget()
@@ -241,22 +228,70 @@ class MainWindow(QMainWindow):
         # Cpu details tab
         cpu_widget = QWidget()
         cpu_layout = QVBoxLayout(cpu_widget)  
+        self.cpu_table = QTableWidget()
+        self.cpu_table.setRowCount(10)
+        self.cpu_table.setColumnCount(2)
+        self.cpu_table.setHorizontalHeaderLabels(["Metric", "Value"])  
 
-        cpu_layout.addWidget(self.cpu_percent2)
-        cpu_layout.addWidget(self.cpu_temp_label2)
-        cpu_layout.addWidget(self.cpu_freq_label)
-        cpu_layout.addWidget(self.cpu_count_logical)
-        cpu_layout.addWidget(self.cpu_count_physical)
-        cpu_layout.addWidget(self.cpu_load_label)
-        cpu_layout.addWidget(self.cpu_context_switches_label)
-        cpu_layout.addWidget(self.cpu_interrupts_label)
-        cpu_layout.addWidget(self.cpu_syscalls_label)
-        cpu_layout.addWidget(self.cpu_user_label)
-        cpu_layout.addWidget(self.cpu_system_label)
-        cpu_layout.addWidget(self.cpu_idle_label)
-        cpu_layout.addStretch()
+        cpu_header = self.cpu_table.horizontalHeader()
+        for i in range(self.cpu_table.columnCount()):
+            cpu_header.setSectionResizeMode(i, QHeaderView.Stretch)
 
+        # Populate the table with CPU details
+        cpu_metrics = [
+            ("CPU Usage (%)", "--"),
+            ("CPU Temperature", "--"),
+            ("CPU Frequency", "--"),
+            ("Logical Core Count", "--"),
+            ("Physical Core Count", "--"),
+            ("CPU Load", "--"),
+            ("Context Switches", "--"),
+            ("Interrupts", "--"),
+            ("System Calls", "--"),
+            ("User Time", "--"),
+            ("System Time", "--"),
+            ("Idle Time", "--"),
+        ]
+
+        for row, (metric_name, metric_value) in enumerate(cpu_metrics):
+            self.cpu_table.setItem(row, 0, QTableWidgetItem(metric_name))
+            self.cpu_table.setItem(row, 1, QTableWidgetItem(str(metric_value)))
+
+        self.cpu_table.horizontalHeader().setStretchLastSection(True)
+        cpu_layout.addWidget(self.cpu_table)
         tabs.addTab(cpu_widget, "CPU Details")
+
+        #Network details tab
+        network_widget = QWidget()
+        network_layout = QVBoxLayout(network_widget)  
+        self.network_table = QTableWidget()
+        self.network_table.setRowCount(4)
+        self.network_table.setColumnCount(2)
+        self.network_table.setHorizontalHeaderLabels(["Metric", "Value"])  
+
+        network_header = self.network_table.horizontalHeader()
+        for i in range(self.network_table.columnCount()):
+            network_header.setSectionResizeMode(i, QHeaderView.Stretch)
+
+        # Populate the table with network details
+        network_metrics = [
+            ("Upload Speed (kb/s)", "--"),  # in kb per second
+            ("Download Speed (kb/s)", "--"),  # in kb per second
+            ("Total Data Sent (kb)", "--"),  # total kb sent
+            ("Total Data Received (kb)", "--"),  # total kb received
+            # ("Packets Sent", "--"),
+            # ("Packets Received", "--"),
+            # ("Errors Sent", "--"),
+            # ("Errors Received", "--"),
+        ]
+
+        for row, (metric_name, metric_value) in enumerate(network_metrics):
+            self.network_table.setItem(row, 0, QTableWidgetItem(metric_name))
+            self.network_table.setItem(row, 1, QTableWidgetItem(str(metric_value)))
+
+        self.network_table.horizontalHeader().setStretchLastSection(True)
+        network_layout.addWidget(self.network_table)
+        tabs.addTab(network_widget, "Network Details")    
 
         #Settings tab
         settings_widget = QWidget()
@@ -298,18 +333,28 @@ class MainWindow(QMainWindow):
         self.cpu_temp_series.append(self.data_points, metrics['cpu_load']['cpu_temp'])
 
         # Update cpu tab
-        self.cpu_percent2.setText(f"CPU Usage: {metrics['cpu']['cpu_percent']}%")
-        self.cpu_temp_label2.setText(f"CPU Temperature: {metrics['cpu']['cpu_temp']}\u00B0C")
-        self.cpu_freq_label.setText(f"CPU Frequency: {metrics['cpu']['cpu_freq']} MHz")
-        self.cpu_count_logical.setText(f"Logical Cores: {metrics['cpu']['cpu_count_logical']}")
-        self.cpu_count_physical.setText(f"Physical Cores: {metrics['cpu']['cpu_count_physical']}")
-        self.cpu_load_label.setText(f"CPU Load Avg (1min): {metrics['cpu']['cpu_load_avg_1min']}")
-        self.cpu_context_switches_label.setText(f"Context Switches: {metrics['cpu']['cpu_context_switches']}")
-        self.cpu_interrupts_label.setText(f"Interrupts: {metrics['cpu']['cpu_interrupts']}")
-        self.cpu_syscalls_label.setText(f"System Calls: {metrics['cpu']['cpu_syscalls']}")
-        self.cpu_user_label.setText(f"User Time: {metrics['cpu']['cpu_user_time']}s")
-        self.cpu_system_label.setText(f"System Time: {metrics['cpu']['cpu_system_time']}s")
-        self.cpu_idle_label.setText(f"Idle Time: {metrics['cpu']['cpu_idle_time']}s")
+        self.cpu_table.setItem(0, 1, QTableWidgetItem(f"{metrics['cpu']['cpu_percent']}%"))
+        self.cpu_table.setItem(1, 1, QTableWidgetItem(f"{metrics['cpu']['cpu_temp']}\u00B0C"))
+        self.cpu_table.setItem(2, 1, QTableWidgetItem(f"{metrics['cpu']['cpu_freq']} MHz"))
+        self.cpu_table.setItem(3, 1, QTableWidgetItem(f"{metrics['cpu']['cpu_count_logical']}"))
+        self.cpu_table.setItem(4, 1, QTableWidgetItem(f"{metrics['cpu']['cpu_count_physical']}"))
+        self.cpu_table.setItem(5, 1, QTableWidgetItem(f"{metrics['cpu']['cpu_load_avg_1min']}"))
+        self.cpu_table.setItem(6, 1, QTableWidgetItem(f"{metrics['cpu']['cpu_context_switches']}"))
+        self.cpu_table.setItem(7, 1, QTableWidgetItem(f"{metrics['cpu']['cpu_interrupts']}"))
+        self.cpu_table.setItem(8, 1, QTableWidgetItem(f"{metrics['cpu']['cpu_syscalls']}"))
+        self.cpu_table.setItem(9, 1, QTableWidgetItem(f"{metrics['cpu']['cpu_user_time']}s"))
+        self.cpu_table.setItem(10, 1, QTableWidgetItem(f"{metrics['cpu']['cpu_system_time']}s"))
+        self.cpu_table.setItem(11, 1, QTableWidgetItem(f"{metrics['cpu']['cpu_idle_time']}s"))
+
+        #update network tab
+        self.network_table.setItem(0, 1, QTableWidgetItem(f"{metrics['network']['upload_speed']} kb/s"))
+        self.network_table.setItem(1, 1, QTableWidgetItem(f"{metrics['network']['download_speed']} kb/s"))
+        self.network_table.setItem(2, 1, QTableWidgetItem(f"{metrics['network']['total_data_sent']} kb"))
+        self.network_table.setItem(3, 1, QTableWidgetItem(f"{metrics['network']['total_data_received']} kb"))
+        # self.network_table.setItem(4, 1, QTableWidgetItem(f"{metrics['network']['packets_sent']}"))
+        # self.network_table.setItem(5, 1, QTableWidgetItem(f"{metrics['network']['packets_received']}"))
+        # self.network_table.setItem(6, 1, QTableWidgetItem(f"{metrics['network']['errors_sent']}"))
+        # self.network_table.setItem(7, 1, QTableWidgetItem(f"{metrics['network']['errors_received']}"))
 
         if self.data_points > self.max_data_points:
             self.cpu_series.remove(0)
@@ -318,9 +363,16 @@ class MainWindow(QMainWindow):
             self.network_series.remove(0)
             self.cpu_temp_series.remove(0)
             
-            for chart in [self.cpu_chart, self.memory_chart, self.disk_chart, self.cpu_temp_chart]:
+            for chart in [self.cpu_chart, self.memory_chart, self.disk_chart, self.network_chart]:
                 chart.axes(Qt.Horizontal)[0].setRange(self.data_points - self.max_data_points, self.data_points)
         self.data_points += 1
+
+        #network
+        if metrics['network']['upload_speed'] > self.max_network_value:
+            self.max_network_value = metrics['network']['upload_speed']
+    
+        buffer = self.max_network_value * 0.1
+        self.network_y.setRange(0, self.max_network_value + buffer)
 
     def update_process_table(self, processes):
         if not self.isVisible():
