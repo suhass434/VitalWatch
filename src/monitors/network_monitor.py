@@ -18,7 +18,7 @@ class NetworkUsage:
         # packets_recv = net_after.packets_recv - net_before.packets_recv
         # errors_sent = net_after.errout - net_before.errout
         # errors_recv = net_after.errin - net_before.errin
-        # print(errors_sent)
+        #print(errors_sent)
         return {
             'upload_speed': bytes_sent_per_sec / 1024,  # in kb per second
             'download_speed': bytes_recv_per_sec / 1024,  # in kb per second

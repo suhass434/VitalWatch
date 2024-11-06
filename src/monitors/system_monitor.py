@@ -27,21 +27,68 @@ class SystemMonitor:
 
     def get_memory_metrics(self):
         mem = psutil.virtual_memory()
+        swap_info = psutil.swap_memory()
         return {
             'total': mem.total,
             'available': mem.available,
             'percent': mem.percent,
-            'used': mem.used
+            'used': mem.used,
+            'swap_total': swap_info.total / (1024**2),
+            'swap_used': swap_info.used / (1024**2),
+            'swap_free': swap_info.free / (1024**2),
+            'swap_percent': swap_info.percent            
         }
 
     def get_disk_metrics(self):
-        disk = psutil.disk_usage('/')
-        return {
-            'total': disk.total,
-            'used': disk.used,
-            'free': disk.free,
-            'percent': disk.percent
+        total = 0
+        used = 0
+        free = 0
+        percent = 0
+        read_count = 0
+        write_count = 0
+        read_bytes = 0
+        write_bytes = 0
+        read_time = 0
+        write_time = 0
+        num_partitions = 0
+
+        for partition in psutil.disk_partitions():
+            try:
+                usage = psutil.disk_usage(partition.mountpoint)
+                io_counters = psutil.disk_io_counters(perdisk=True).get(partition.device.split('/')[-1])
+
+                total += usage.total
+                used += usage.used
+                free += usage.free
+                percent += usage.percent
+                read_count += io_counters.read_count if io_counters else 0
+                write_count += io_counters.write_count if io_counters else 0
+                read_bytes += io_counters.read_bytes if io_counters else 0
+                write_bytes += io_counters.write_bytes if io_counters else 0
+                read_time += io_counters.read_time if io_counters else 0
+                write_time += io_counters.write_time if io_counters else 0
+                num_partitions += 1
+
+            except (KeyError, PermissionError):
+                continue
+        # Calculate average values
+        if num_partitions > 0:
+            percent = round(percent / num_partitions, 2)
+
+        disk_metrics = {
+            'total': total,
+            'used': used,
+            'free': free,
+            'percent': percent,
+            'read_count': read_count,
+            'write_count': write_count,
+            'read_bytes': read_bytes,
+            'write_bytes': write_bytes,
+            'read_time': read_time,
+            'write_time': write_time
         }
+
+        return disk_metrics
 
     def get_network_metrics(self,interval = 1):
         # Capture bytes sent/received at the start

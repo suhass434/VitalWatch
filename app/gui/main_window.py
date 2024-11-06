@@ -1,7 +1,7 @@
 from PyQt5.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, QTabWidget, QPushButton, QLabel, QTableWidget, QTableWidgetItem, QHeaderView, QGroupBox, QCheckBox)
 from PyQt5.QtChart import QChart, QChartView, QLineSeries, QValueAxis
 from PyQt5.QtCore import Qt
-from PyQt5.QtGui import QColor, QBrush, QPen
+from PyQt5.QtGui import QColor, QBrush, QPen, QFont
 import threading
 from app.gui.styles import STYLE_SHEET
 import yaml
@@ -9,9 +9,15 @@ import sys
 
 class MainWindow(QMainWindow):
     def __init__(self):
+        #font
+        font_size = 200
+        font = QFont()
+        font.setFamily("Arial")
+        font.setPointSize(font_size)
         super().__init__()
         #overview label initialization
         self.cpu_percent = QLabel("Cpu percent:--")
+        self.cpu_percent.setFont(font)
         self.cpu_temp_label = QLabel("--")
         self.current_processes = []
         self.memory_label = QLabel("Memory Usage: --")
@@ -35,7 +41,7 @@ class MainWindow(QMainWindow):
         self.cpu_temp_chart = QChart()
         
         self.setup_charts()
-        self.setup_ui()        
+        self.setup_ui()  
 
     def load_config(self):
         with open('config/config.yaml', 'r') as file:
@@ -168,7 +174,7 @@ class MainWindow(QMainWindow):
 
     def setup_ui(self): 
         self.setWindowTitle("AutoGuard")
-        self.setMinimumSize(800, 600)
+        self.setMinimumSize(820, 600)
         
         # Create central widget and layout
         central_widget = QWidget()
@@ -261,9 +267,75 @@ class MainWindow(QMainWindow):
         cpu_layout.addWidget(self.cpu_table)
         tabs.addTab(cpu_widget, "CPU Details")
 
+        # Memory details tab
+        memory_widget = QWidget()
+        memory_layout = QVBoxLayout(memory_widget)  
+        self.memory_table = QTableWidget()
+        self.memory_table.setRowCount(8)
+        self.memory_table.setColumnCount(2)
+        self.memory_table.setHorizontalHeaderLabels(["Metric", "Value"])  
+
+        memory_header = self.memory_table.horizontalHeader()
+        for i in range(self.memory_table.columnCount()):
+            memory_header.setSectionResizeMode(i, QHeaderView.Stretch)
+
+        # Populate the table with memory details
+        memory_metrics = [
+            ("Total Memory (MB)", "--"),
+            ("Available Memory (MB)", "--"),
+            ("Memory Usage (%)", "--"),
+            ("Used Memory (MB)", "--"),
+            ("Swap Total (MB)", "--"),
+            ("Swap Used (MB)", "--"),
+            ("Swap Free (MB)", "--"),
+            ("Swap Usage (%)", "--"),
+        ]
+
+        for row, (metric_name, metric_value) in enumerate(memory_metrics):
+            self.memory_table.setItem(row, 0, QTableWidgetItem(metric_name))
+            self.memory_table.setItem(row, 1, QTableWidgetItem(str(metric_value)))
+
+        self.memory_table.horizontalHeader().setStretchLastSection(True)
+        memory_layout.addWidget(self.memory_table)
+        tabs.addTab(memory_widget, "Memory Details")
+
+        # Disk tab setup
+        disk_widget = QWidget()
+        disk_layout = QVBoxLayout(disk_widget)
+        self.disk_table = QTableWidget()
+        self.disk_table.setRowCount(10)  # Adjust rows as needed based on metrics
+        self.disk_table.setColumnCount(2)
+        self.disk_table.setHorizontalHeaderLabels(["Metric", "Value"])
+
+        disk_header = self.disk_table.horizontalHeader()
+        for i in range(self.disk_table.columnCount()):
+            disk_header.setSectionResizeMode(i, QHeaderView.Stretch)
+
+        # Populate the table with disk metrics
+        disk_metrics = [
+            ("Total Disk Space (MB)", "--"),
+            ("Used Disk Space (MB)", "--"),
+            ("Free Disk Space (MB)", "--"),
+            ("Disk Usage (%)", "--"),
+            ("Read Count", "--"),
+            ("Write Count", "--"),
+            ("Read Bytes (MB)", "--"),
+            ("Write Bytes (MB)", "--"),
+            ("Read Time (ms)", "--"),
+            ("Write Time (ms)", "--"),
+        ]
+
+        for row, (metric_name, metric_value) in enumerate(disk_metrics):
+            self.disk_table.setItem(row, 0, QTableWidgetItem(metric_name))
+            self.disk_table.setItem(row, 1, QTableWidgetItem(str(metric_value)))
+
+        self.disk_table.horizontalHeader().setStretchLastSection(True)
+        disk_layout.addWidget(self.disk_table)
+        tabs.addTab(disk_widget, "Disk Details")
+
         #Network details tab
         network_widget = QWidget()
-        network_layout = QVBoxLayout(network_widget)  
+        network_layout = QVBoxLayout(network_widget)    
         self.network_table = QTableWidget()
         self.network_table.setRowCount(4)
         self.network_table.setColumnCount(2)
@@ -345,6 +417,28 @@ class MainWindow(QMainWindow):
         self.cpu_table.setItem(9, 1, QTableWidgetItem(f"{metrics['cpu']['cpu_user_time']}s"))
         self.cpu_table.setItem(10, 1, QTableWidgetItem(f"{metrics['cpu']['cpu_system_time']}s"))
         self.cpu_table.setItem(11, 1, QTableWidgetItem(f"{metrics['cpu']['cpu_idle_time']}s"))
+
+        # Update memory tab
+        self.memory_table.setItem(0, 1, QTableWidgetItem(f"{metrics['memory']['total'] / (1024**2):.2f} MB"))
+        self.memory_table.setItem(1, 1, QTableWidgetItem(f"{metrics['memory']['available'] / (1024**2):.2f} MB"))
+        self.memory_table.setItem(2, 1, QTableWidgetItem(f"{metrics['memory']['percent']}%"))
+        self.memory_table.setItem(3, 1, QTableWidgetItem(f"{metrics['memory']['used'] / (1024**2):.2f} MB"))
+        self.memory_table.setItem(4, 1, QTableWidgetItem(f"{metrics['memory']['swap_total']:.2f} MB"))
+        self.memory_table.setItem(5, 1, QTableWidgetItem(f"{metrics['memory']['swap_used']:.2f} MB"))
+        self.memory_table.setItem(6, 1, QTableWidgetItem(f"{metrics['memory']['swap_free']:.2f} MB"))
+        self.memory_table.setItem(7, 1, QTableWidgetItem(f"{metrics['memory']['swap_percent']}%"))
+
+        # Update disk tab
+        self.disk_table.setItem(0, 1, QTableWidgetItem(f"{metrics['disk']['total'] / (1024**2):.2f} MB"))
+        self.disk_table.setItem(1, 1, QTableWidgetItem(f"{metrics['disk']['used'] / (1024**2):.2f} MB"))
+        self.disk_table.setItem(2, 1, QTableWidgetItem(f"{metrics['disk']['free'] / (1024**2):.2f} MB"))
+        self.disk_table.setItem(3, 1, QTableWidgetItem(f"{metrics['disk']['percent']}%"))
+        self.disk_table.setItem(4, 1, QTableWidgetItem(f"{metrics['disk']['read_count']}"))
+        self.disk_table.setItem(5, 1, QTableWidgetItem(f"{metrics['disk']['write_count']}"))
+        self.disk_table.setItem(6, 1, QTableWidgetItem(f"{metrics['disk']['read_bytes'] / (1024**2):.2f} MB"))
+        self.disk_table.setItem(7, 1, QTableWidgetItem(f"{metrics['disk']['write_bytes'] / (1024**2):.2f} MB"))
+        self.disk_table.setItem(8, 1, QTableWidgetItem(f"{metrics['disk']['read_time']} ms"))
+        self.disk_table.setItem(9, 1, QTableWidgetItem(f"{metrics['disk']['write_time']} ms"))
 
         #update network tab
         self.network_table.setItem(0, 1, QTableWidgetItem(f"{metrics['network']['upload_speed']} kb/s"))
