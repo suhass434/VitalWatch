@@ -1,8 +1,9 @@
+#!/usr/bin/env xdg-open
 [Desktop Entry]
-Name=System Health Monitor
-Comment=Monitor system health and performance
-Exec=/path/to/your/venv/bin/python /path/to/your/app/run.py
-Icon=/path/to/your/app/icons/app_icon.png
-Terminal=false
-Type=Application
-Categories=System;Monitor;
+Name = AutoGuard
+Comment = Monitor system health and performance
+Exec = ./env/bin/activate.fish ./run.py
+Icon = ./app/icons/icon.jpeg
+Terminal = false
+Type = Application
+Categories = System;Monitor;

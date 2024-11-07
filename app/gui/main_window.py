@@ -245,7 +245,7 @@ class MainWindow(QMainWindow):
 
         # Populate the table with CPU details
         cpu_metrics = [
-            ("CPU Usage (%)", "--"),
+            ("CPU Usage", "--"),
             ("CPU Temperature", "--"),
             ("CPU Frequency", "--"),
             ("Logical Core Count", "--"),
@@ -379,7 +379,14 @@ class MainWindow(QMainWindow):
         background_group.setLayout(background_layout)
         settings_layout.addWidget(background_group)
         settings_layout.addStretch()
-    
+
+        #read only
+        self.process_table.setEditTriggers(QTableWidget.NoEditTriggers)
+        self.cpu_table.setEditTriggers(QTableWidget.NoEditTriggers)
+        self.memory_table.setEditTriggers(QTableWidget.NoEditTriggers)
+        self.disk_table.setEditTriggers(QTableWidget.NoEditTriggers)
+        self.network_table.setEditTriggers(QTableWidget.NoEditTriggers)
+        
         tabs.addTab(settings_widget, "Settings")
 
 
