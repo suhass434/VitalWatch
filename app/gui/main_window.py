@@ -1,4 +1,4 @@
-from PyQt5.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, QTabWidget, QPushButton, QLabel, QTableWidget, QTableWidgetItem, QHeaderView, QGroupBox, QCheckBox)
+from PyQt5.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, QTabWidget, QPushButton, QLabel, QTableWidget, QTableWidgetItem, QHeaderView, QGroupBox, QCheckBox, QButtonGroup, QRadioButton)
 from PyQt5.QtChart import QChart, QChartView, QLineSeries, QValueAxis
 from PyQt5.QtCore import Qt
 from PyQt5.QtGui import QColor, QBrush, QPen, QFont
@@ -16,7 +16,7 @@ class MainWindow(QMainWindow):
         font.setPointSize(font_size)
         super().__init__()
         #overview label initialization
-        self.cpu_percent = QLabel("Cpu percent:--")
+        self.cpu_percent = QLabel("Cpu Usage: --")
         self.cpu_percent.setFont(font)
         self.cpu_temp_label = QLabel("--")
         self.current_processes = []
@@ -42,6 +42,40 @@ class MainWindow(QMainWindow):
         
         self.setup_charts()
         self.setup_ui()  
+        
+    def set_dark_mode(self):
+        #self.setStyleSheet(STYLE_SHEET["dark"])
+        self.cpu_chart.setBackgroundBrush(QBrush(QColor("#2B2B2B")))
+        self.memory_chart.setBackgroundBrush(QBrush(QColor("#2B2B2B")))
+        self.disk_chart.setBackgroundBrush(QBrush(QColor("#2B2B2B")))
+        self.network_chart.setBackgroundBrush(QBrush(QColor("#2B2B2B")))
+        self.cpu_percent.setStyleSheet("color: white")
+        self.memory_label.setStyleSheet("color: white")
+        self.disk_label.setStyleSheet("color: white")
+        self.network_label.setStyleSheet("color: white")
+        self.process_table.setStyleSheet("background-color: #2B2B2B; color: white")
+        self.cpu_table.setStyleSheet("background-color: #2B2B2B; color: white")
+        self.memory_table.setStyleSheet("background-color: #2B2B2B; color: white")
+        self.disk_table.setStyleSheet("background-color: #2B2B2B; color: white")
+        self.network_table.setStyleSheet("background-color: #2B2B2B; color: white")
+        self.settings_widget.setStyleSheet("background-color: #2B2B2B;  color: white")
+
+    def set_light_mode(self):
+        #self.setStyleSheet(STYLE_SHEET["light"])
+        self.cpu_chart.setBackgroundBrush(QBrush(QColor("#FFFFFF")))
+        self.memory_chart.setBackgroundBrush(QBrush(QColor("#FFFFFF")))
+        self.disk_chart.setBackgroundBrush(QBrush(QColor("#FFFFFF")))
+        self.network_chart.setBackgroundBrush(QBrush(QColor("#FFFFFF")))
+        self.cpu_percent.setStyleSheet("color: black")
+        self.memory_label.setStyleSheet("color: black")
+        self.disk_label.setStyleSheet("color: black")
+        self.network_label.setStyleSheet("color: black")
+        self.process_table.setStyleSheet("background-color: #FFFFFF; color: black")
+        self.cpu_table.setStyleSheet("background-color: #FFFFFF; color: black")
+        self.memory_table.setStyleSheet("background-color: #FFFFFF; color: black")
+        self.disk_table.setStyleSheet("background-color: #FFFFFF; color: black")
+        self.network_table.setStyleSheet("background-color: #FFFFFF; color: black")
+        self.settings_widget.setStyleSheet("background-color: #FFFFFF; color: black")
 
     def load_config(self):
         with open('config/config.yaml', 'r') as file:
@@ -56,7 +90,6 @@ class MainWindow(QMainWindow):
                 'memory_line': QColor("#FF6B6B"),#"#4ECDC4"
                 'disk_line': QColor("#FF6B6B"),
                 'network_line': QColor("#FF6B6B")
-                #'fill_color': QColor("#FF6B6B").lighter(170) 
             }       
         config = self.load_config()
         self.max_count = config['monitoring']['process']['max_count']
@@ -198,7 +231,7 @@ class MainWindow(QMainWindow):
         overview_layout.addWidget(QChartView(self.disk_chart), 3, 0)        
         overview_layout.addWidget(self.network_label, 2, 1)
         overview_layout.addWidget(QChartView(self.network_chart), 3, 1)        
-        tabs.addTab(overview_widget, "Overview")
+        #tabs.addTab(overview_widget, "Overview")
 
 
         # Processes tab
@@ -229,7 +262,7 @@ class MainWindow(QMainWindow):
         
         header.setDefaultAlignment(Qt.AlignLeft)
         processes_layout.addWidget(self.process_table)
-        tabs.addTab(processes_widget, "Processes")        
+        #tabs.addTab(processes_widget, "Processes")        
 
         # Cpu details tab
         cpu_widget = QWidget()
@@ -265,7 +298,7 @@ class MainWindow(QMainWindow):
 
         self.cpu_table.horizontalHeader().setStretchLastSection(True)
         cpu_layout.addWidget(self.cpu_table)
-        tabs.addTab(cpu_widget, "CPU Details")
+        #tabs.addTab(cpu_widget, "CPU Details")
 
         # Memory details tab
         memory_widget = QWidget()
@@ -281,14 +314,14 @@ class MainWindow(QMainWindow):
 
         # Populate the table with memory details
         memory_metrics = [
-            ("Total Memory (MB)", "--"),
-            ("Available Memory (MB)", "--"),
-            ("Memory Usage (%)", "--"),
-            ("Used Memory (MB)", "--"),
-            ("Swap Total (MB)", "--"),
-            ("Swap Used (MB)", "--"),
-            ("Swap Free (MB)", "--"),
-            ("Swap Usage (%)", "--"),
+            ("Total Memory", "--"),
+            ("Available Memory", "--"),
+            ("Memory Usage", "--"),
+            ("Used Memory", "--"),
+            ("Swap Total", "--"),
+            ("Swap Used", "--"),
+            ("Swap Free", "--"),
+            ("Swap Usage", "--"),
         ]
 
         for row, (metric_name, metric_value) in enumerate(memory_metrics):
@@ -297,7 +330,7 @@ class MainWindow(QMainWindow):
 
         self.memory_table.horizontalHeader().setStretchLastSection(True)
         memory_layout.addWidget(self.memory_table)
-        tabs.addTab(memory_widget, "Memory Details")
+        #tabs.addTab(memory_widget, "Memory Details")
 
         # Disk tab setup
         disk_widget = QWidget()
@@ -313,16 +346,16 @@ class MainWindow(QMainWindow):
 
         # Populate the table with disk metrics
         disk_metrics = [
-            ("Total Disk Space (MB)", "--"),
-            ("Used Disk Space (MB)", "--"),
-            ("Free Disk Space (MB)", "--"),
-            ("Disk Usage (%)", "--"),
+            ("Total Disk Space", "--"),
+            ("Used Disk Space", "--"),
+            ("Free Disk Space", "--"),
+            ("Disk Usag", "--"),
             ("Read Count", "--"),
             ("Write Count", "--"),
-            ("Read Bytes (MB)", "--"),
-            ("Write Bytes (MB)", "--"),
-            ("Read Time (ms)", "--"),
-            ("Write Time (ms)", "--"),
+            ("Read Bytes", "--"),
+            ("Write Bytes", "--"),
+            ("Read Time", "--"),
+            ("Write Time", "--"),
         ]
 
         for row, (metric_name, metric_value) in enumerate(disk_metrics):
@@ -331,7 +364,7 @@ class MainWindow(QMainWindow):
 
         self.disk_table.horizontalHeader().setStretchLastSection(True)
         disk_layout.addWidget(self.disk_table)
-        tabs.addTab(disk_widget, "Disk Details")
+        #tabs.addTab(disk_widget, "Disk Details")
 
         #Network details tab
         network_widget = QWidget()
@@ -347,10 +380,10 @@ class MainWindow(QMainWindow):
 
         # Populate the table with network details
         network_metrics = [
-            ("Upload Speed (kb/s)", "--"),  # in kb per second
-            ("Download Speed (kb/s)", "--"),  # in kb per second
-            ("Total Data Sent (kb)", "--"),  # total kb sent
-            ("Total Data Received (kb)", "--"),  # total kb received
+            ("Upload Speed", "--"),  # in kb per second
+            ("Download Speed", "--"),  # in kb per second
+            ("Total Data Sent", "--"),  # total kb sent
+            ("Total Data Received", "--"),  # total kb received
             # ("Packets Sent", "--"),
             # ("Packets Received", "--"),
             # ("Errors Sent", "--"),
@@ -363,22 +396,38 @@ class MainWindow(QMainWindow):
 
         self.network_table.horizontalHeader().setStretchLastSection(True)
         network_layout.addWidget(self.network_table)
-        tabs.addTab(network_widget, "Network Details")    
+        #tabs.addTab(network_widget, "Network Details")    
 
         #Settings tab
-        settings_widget = QWidget()
-        settings_layout = QVBoxLayout(settings_widget)
+        self.settings_widget = QWidget()
+        self.settings_layout = QVBoxLayout(self.settings_widget)
         #background running option
         background_group = QGroupBox("Background Running")
         background_layout = QVBoxLayout()
-
         self.background_checkbox = QCheckBox("Run in background")
         self.background_checkbox.setChecked(True)
+        
+        #Theme selection
+        self.theme_group = QButtonGroup()
+        self.theme_group.setExclusive(True)
+
+        self.light_button = QRadioButton("Light Mode")
+        self.light_button.toggled.connect(self.set_light_mode)
+        self.theme_group.addButton(self.light_button)
+
+        self.dark_button = QRadioButton("Dark Mode")
+        self.dark_button.setChecked(True)        
+        self.dark_button.toggled.connect(self.set_dark_mode)
+        self.theme_group.addButton(self.dark_button)
+        theme_layout = QHBoxLayout()
+        theme_layout.addWidget(self.dark_button)
+        theme_layout.addWidget(self.light_button)
 
         background_layout.addWidget(self.background_checkbox)
         background_group.setLayout(background_layout)
-        settings_layout.addWidget(background_group)
-        settings_layout.addStretch()
+        self.settings_layout.addWidget(background_group)
+        self.settings_layout.addLayout(theme_layout)
+        self.settings_layout.addStretch()
 
         #read only
         self.process_table.setEditTriggers(QTableWidget.NoEditTriggers)
@@ -387,7 +436,16 @@ class MainWindow(QMainWindow):
         self.disk_table.setEditTriggers(QTableWidget.NoEditTriggers)
         self.network_table.setEditTriggers(QTableWidget.NoEditTriggers)
         
-        tabs.addTab(settings_widget, "Settings")
+        self.set_dark_mode()
+
+        # add all tabs
+        tabs.addTab(overview_widget, "Overview")
+        tabs.addTab(cpu_widget, "CPU Details")
+        tabs.addTab(memory_widget, "Memory Details")
+        tabs.addTab(disk_widget, "Disk Details")
+        tabs.addTab(network_widget, "Network Details")    
+        tabs.addTab(processes_widget, "Processes")
+        tabs.addTab(self.settings_widget, "Settings")
 
 
     def toggle_process_view(self):
@@ -400,7 +458,7 @@ class MainWindow(QMainWindow):
         # Update labels
         self.memory_label.setText(f"Memory Usage: {metrics['memory']['percent']}%")
         self.disk_label.setText(f"Disk Usage: {metrics['disk']['percent']}%")
-        self.network_label.setText(f"Network Usage: {metrics['network']['upload_speed']}kb")
+        self.network_label.setText(f"Network Usage: {metrics['network']['upload_speed']}kbps")
         self.cpu_percent.setText(f"CPU Usage: {metrics['cpu']['cpu_percent']}%")
         self.cpu_temp_label.setText(f"CPU Temperature: {metrics['cpu']['cpu_temp']}\u00B0C")
 
@@ -426,32 +484,32 @@ class MainWindow(QMainWindow):
         self.cpu_table.setItem(11, 1, QTableWidgetItem(f"{metrics['cpu']['cpu_idle_time']}s"))
 
         # Update memory tab
-        self.memory_table.setItem(0, 1, QTableWidgetItem(f"{metrics['memory']['total'] / (1024**2):.2f} MB"))
-        self.memory_table.setItem(1, 1, QTableWidgetItem(f"{metrics['memory']['available'] / (1024**2):.2f} MB"))
+        self.memory_table.setItem(0, 1, QTableWidgetItem(f"{metrics['memory']['total'] / (1024**2)/ 1024:.2f} GB" if metrics['memory']['total'] / (1024**2) > 1024 else f"{metrics['memory']['total'] / (1024**2):.2f} MB"))
+        self.memory_table.setItem(1, 1, QTableWidgetItem(f"{(metrics['memory']['available'] / (1024**2)) / 1024:.2f} GB" if metrics['memory']['available'] / (1024**2) > 1024 else f"{metrics['memory']['available'] / (1024**2):.2f} MB"))
         self.memory_table.setItem(2, 1, QTableWidgetItem(f"{metrics['memory']['percent']}%"))
-        self.memory_table.setItem(3, 1, QTableWidgetItem(f"{metrics['memory']['used'] / (1024**2):.2f} MB"))
-        self.memory_table.setItem(4, 1, QTableWidgetItem(f"{metrics['memory']['swap_total']:.2f} MB"))
-        self.memory_table.setItem(5, 1, QTableWidgetItem(f"{metrics['memory']['swap_used']:.2f} MB"))
-        self.memory_table.setItem(6, 1, QTableWidgetItem(f"{metrics['memory']['swap_free']:.2f} MB"))
+        self.memory_table.setItem(3, 1, QTableWidgetItem(f"{(metrics['memory']['used'] / (1024**2)) / 1024:.2f} GB" if metrics['memory']['used'] / (1024**2) > 1024 else f"{metrics['memory']['used'] / (1024**2):.2f} MB"))
+        self.memory_table.setItem(4, 1, QTableWidgetItem(f"{metrics['memory']['swap_total'] / (1024**2) / 1024:.2f} GB" if metrics['memory']['swap_total'] / 1024 > 1 else f"{metrics['memory']['swap_total'] / (1024**2):.2f} MB"))
+        self.memory_table.setItem(5, 1, QTableWidgetItem(f"{metrics['memory']['swap_used'] / (1024**2) / 1024:.2f} GB" if metrics['memory']['swap_used'] / 1024 > 1 else f"{metrics['memory']['swap_used'] / (1024**2):.2f} MB"))
+        self.memory_table.setItem(6, 1, QTableWidgetItem(f"{metrics['memory']['swap_free'] / (1024**2) / 1024:.2f} GB" if metrics['memory']['swap_free'] / 1024 > 1 else f"{metrics['memory']['swap_free'] / (1024**2):.2f} MB"))
         self.memory_table.setItem(7, 1, QTableWidgetItem(f"{metrics['memory']['swap_percent']}%"))
 
         # Update disk tab
-        self.disk_table.setItem(0, 1, QTableWidgetItem(f"{metrics['disk']['total'] / (1024**2):.2f} MB"))
-        self.disk_table.setItem(1, 1, QTableWidgetItem(f"{metrics['disk']['used'] / (1024**2):.2f} MB"))
-        self.disk_table.setItem(2, 1, QTableWidgetItem(f"{metrics['disk']['free'] / (1024**2):.2f} MB"))
+        self.disk_table.setItem(0, 1, QTableWidgetItem(f"{metrics['disk']['total'] / (1024**2):.2f} MB" if metrics['disk']['total'] / (1024**2) <= 1024 else f"{metrics['disk']['total'] / (1024**2) / 1024:.2f} GB" if metrics['disk']['total'] / (1024**2) <= 1024**2 else f"{metrics['disk']['total'] / (1024**2) / 1024**2:.2f} TB"))
+        self.disk_table.setItem(1, 1, QTableWidgetItem(f"{metrics['disk']['used'] / (1024**2):.2f} MB" if metrics['disk']['used'] / (1024**2) <= 1024 else f"{metrics['disk']['used'] / (1024**2) / 1024:.2f} GB" if metrics['disk']['used'] / (1024**2) <= 1024**2 else f"{metrics['disk']['used'] / (1024**2) / 1024**2:.2f} TB"))
+        self.disk_table.setItem(2, 1, QTableWidgetItem(f"{metrics['disk']['free'] / (1024**2):.2f} MB" if metrics['disk']['free'] / (1024**2) <= 1024 else f"{metrics['disk']['free'] / (1024**2) / 1024:.2f} GB" if metrics['disk']['free'] / (1024**2) <= 1024**2 else f"{metrics['disk']['free'] / (1024**2) / 1024**2:.2f} TB"))
         self.disk_table.setItem(3, 1, QTableWidgetItem(f"{metrics['disk']['percent']}%"))
         self.disk_table.setItem(4, 1, QTableWidgetItem(f"{metrics['disk']['read_count']}"))
         self.disk_table.setItem(5, 1, QTableWidgetItem(f"{metrics['disk']['write_count']}"))
-        self.disk_table.setItem(6, 1, QTableWidgetItem(f"{metrics['disk']['read_bytes'] / (1024**2):.2f} MB"))
-        self.disk_table.setItem(7, 1, QTableWidgetItem(f"{metrics['disk']['write_bytes'] / (1024**2):.2f} MB"))
-        self.disk_table.setItem(8, 1, QTableWidgetItem(f"{metrics['disk']['read_time']} ms"))
-        self.disk_table.setItem(9, 1, QTableWidgetItem(f"{metrics['disk']['write_time']} ms"))
+        self.disk_table.setItem(6, 1, QTableWidgetItem(f"{metrics['disk']['read_bytes'] / (1024**2) / 1024:.2f} GB" if metrics['disk']['read_bytes'] / (1024**2) > 1024 else f"{metrics['disk']['read_bytes'] / (1024**2):.2f} MB"))
+        self.disk_table.setItem(7, 1, QTableWidgetItem(f"{metrics['disk']['write_bytes'] / (1024**2) / 1024:.2f} GB" if metrics['disk']['write_bytes'] / (1024**2) > 1024 else f"{metrics['disk']['write_bytes'] / (1024**2):.2f} MB"))
+        self.disk_table.setItem(8, 1, QTableWidgetItem(f"{metrics['disk']['read_time'] / 1000:.2f} sec" if metrics['disk']['read_time'] >= 60000 else f"{metrics['disk']['read_time'] / 60000:.2f} min" if metrics['disk']['read_time'] >= 3600000 else f"{metrics['disk']['read_time']:.2f} ms"))
+        self.disk_table.setItem(9, 1, QTableWidgetItem(f"{metrics['disk']['write_time'] / 1000:.2f} sec" if metrics['disk']['write_time'] >= 60000 else f"{metrics['disk']['write_time'] / 60000:.2f} min" if metrics['disk']['write_time'] >= 3600000 else f"{metrics['disk']['write_time']:.2f} ms"))
 
         #update network tab
-        self.network_table.setItem(0, 1, QTableWidgetItem(f"{metrics['network']['upload_speed']} kb/s"))
-        self.network_table.setItem(1, 1, QTableWidgetItem(f"{metrics['network']['download_speed']} kb/s"))
-        self.network_table.setItem(2, 1, QTableWidgetItem(f"{metrics['network']['total_data_sent']} kb"))
-        self.network_table.setItem(3, 1, QTableWidgetItem(f"{metrics['network']['total_data_received']} kb"))
+        self.network_table.setItem(0, 1, QTableWidgetItem(f"{metrics['network']['upload_speed'] / 1024:.2f} MB/s" if metrics['network']['upload_speed'] >= 1024 else f"{metrics['network']['upload_speed']} kb/s"))
+        self.network_table.setItem(1, 1, QTableWidgetItem(f"{metrics['network']['download_speed'] / 1024:.2f} MB/s" if metrics['network']['download_speed'] >= 1024 else f"{metrics['network']['download_speed']} kb/s"))
+        self.network_table.setItem(2, 1, QTableWidgetItem(f"{metrics['network']['total_data_sent'] / (1024**2):.2f} GB" if metrics['network']['total_data_sent'] >= 1024**2 else f"{metrics['network']['total_data_sent'] / 1024:.2f} MB" if metrics['network']['total_data_sent'] >= 1024 else f"{metrics['network']['total_data_sent']} kb"))
+        self.network_table.setItem(3, 1, QTableWidgetItem(f"{metrics['network']['total_data_received'] / (1024**2):.2f} GB" if metrics['network']['total_data_received'] >= 1024**2 else f"{metrics['network']['total_data_received'] / 1024:.2f} MB" if metrics['network']['total_data_received'] >= 1024 else f"{metrics['network']['total_data_received']} kb"))
         # self.network_table.setItem(4, 1, QTableWidgetItem(f"{metrics['network']['packets_sent']}"))
         # self.network_table.setItem(5, 1, QTableWidgetItem(f"{metrics['network']['packets_received']}"))
         # self.network_table.setItem(6, 1, QTableWidgetItem(f"{metrics['network']['errors_sent']}"))

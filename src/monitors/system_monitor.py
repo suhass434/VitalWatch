@@ -33,9 +33,9 @@ class SystemMonitor:
             'available': mem.available,
             'percent': mem.percent,
             'used': mem.used,
-            'swap_total': swap_info.total / (1024**2),
-            'swap_used': swap_info.used / (1024**2),
-            'swap_free': swap_info.free / (1024**2),
+            'swap_total': swap_info.total,
+            'swap_used': swap_info.used,
+            'swap_free': swap_info.free,
             'swap_percent': swap_info.percent            
         }
 
