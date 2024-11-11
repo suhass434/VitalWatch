@@ -1,9 +1,11 @@
-from PyQt5.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, QTabWidget, QPushButton, QLabel, QTableWidget, QTableWidgetItem, QHeaderView, QGroupBox, QCheckBox, QButtonGroup, QRadioButton, QApplication)
+from PyQt5.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, QTabWidget, QPushButton, QLabel, QTableWidget, QTableWidgetItem,
+                             QHeaderView, QGroupBox, QCheckBox, QButtonGroup, QRadioButton, QApplication, QGraphicsRectItem, QGraphicsDropShadowEffect)
 from PyQt5.QtChart import QChart, QChartView, QLineSeries, QValueAxis
 from PyQt5.QtCore import Qt
 from PyQt5.QtGui import QColor, QBrush, QPen, QFont
 import threading
-from app.gui.styles import STYLE_SHEET
+#from app.gui.styles import STYLE_SHEET
+from app.gui.styleSheet import STYLE_SHEET
 import yaml
 import sys
 
@@ -43,172 +45,105 @@ class MainWindow(QMainWindow):
         self.network_chart = QChart()
         self.cpu_temp_chart = QChart()
         
-        self.setup_charts()
         self.setup_ui()  
 
     def set_dark_mode(self):
-        #self.setStyleSheet(STYLE_SHEET["dark"])
-        self.cpu_chart.setBackgroundBrush(QBrush(QColor("#2B2B2B")))
-        self.memory_chart.setBackgroundBrush(QBrush(QColor("#2B2B2B")))
-        self.disk_chart.setBackgroundBrush(QBrush(QColor("#2B2B2B")))
-        self.network_chart.setBackgroundBrush(QBrush(QColor("#2B2B2B")))
-        self.cpu_percent.setStyleSheet("color: white")
-        self.memory_label.setStyleSheet("color: white")
-        self.disk_label.setStyleSheet("color: white")
-        self.network_label.setStyleSheet("color: white")
-        self.process_table.setStyleSheet("background-color: #2B2B2B; color: white")
-        self.cpu_table.setStyleSheet("background-color: #2B2B2B; color: white")
-        self.memory_table.setStyleSheet("background-color: #2B2B2B; color: white")
-        self.disk_table.setStyleSheet("background-color: #2B2B2B; color: white")
-        self.network_table.setStyleSheet("background-color: #2B2B2B; color: white")
-        self.settings_widget.setStyleSheet("background-color: #2B2B2B;  color: white")
+        colors = STYLE_SHEET["dark"]
+        self.setStyleSheet(f"background-color: {colors['background_color']};")
+        self.cpu_chart.setBackgroundBrush(QBrush(QColor(colors["chart_background"])))
+        self.memory_chart.setBackgroundBrush(QBrush(QColor(colors["chart_background"])))
+        self.disk_chart.setBackgroundBrush(QBrush(QColor(colors["chart_background"])))
+        self.network_chart.setBackgroundBrush(QBrush(QColor(colors["chart_background"])))
+        
+        self.cpu_percent.setStyleSheet(f"color: {colors['label_text_color']}")
+        self.memory_label.setStyleSheet(f"color: {colors['label_text_color']}")
+        self.disk_label.setStyleSheet(f"color: {colors['label_text_color']}")
+        self.network_label.setStyleSheet(f"color: {colors['label_text_color']}")
+        
+        self.process_table.setStyleSheet(f"background-color: {colors['table_background']}; color: {colors['table_text_color']}")
+        self.cpu_table.setStyleSheet(f"background-color: {colors['table_background']}; color: {colors['table_text_color']}")
+        self.memory_table.setStyleSheet(f"background-color: {colors['table_background']}; color: {colors['table_text_color']}")
+        self.disk_table.setStyleSheet(f"background-color: {colors['table_background']}; color: {colors['table_text_color']}")
+        self.network_table.setStyleSheet(f"background-color: {colors['table_background']}; color: {colors['table_text_color']}")
+        self.settings_widget.setStyleSheet(f"background-color: {colors['background_color']}; color: {colors['table_text_color']}")
+
 
     def set_light_mode(self):
-        #self.setStyleSheet(STYLE_SHEET["light"])
-        self.cpu_chart.setBackgroundBrush(QBrush(QColor("#FFFFFF")))
-        self.memory_chart.setBackgroundBrush(QBrush(QColor("#FFFFFF")))
-        self.disk_chart.setBackgroundBrush(QBrush(QColor("#FFFFFF")))
-        self.network_chart.setBackgroundBrush(QBrush(QColor("#FFFFFF")))
-        self.cpu_percent.setStyleSheet("color: black")
-        self.memory_label.setStyleSheet("color: black")
-        self.disk_label.setStyleSheet("color: black")
-        self.network_label.setStyleSheet("color: black")
-        self.process_table.setStyleSheet("background-color: #FFFFFF; color: black")
-        self.cpu_table.setStyleSheet("background-color: #FFFFFF; color: black")
-        self.memory_table.setStyleSheet("background-color: #FFFFFF; color: black")
-        self.disk_table.setStyleSheet("background-color: #FFFFFF; color: black")
-        self.network_table.setStyleSheet("background-color: #FFFFFF; color: black")
-        self.settings_widget.setStyleSheet("background-color: #FFFFFF; color: black")
+        colors = STYLE_SHEET["light"]
+        self.setStyleSheet(f"background-color: {colors['background_color']};")        
+        self.cpu_chart.setBackgroundBrush(QBrush(QColor(colors["chart_background"])))
+        self.memory_chart.setBackgroundBrush(QBrush(QColor(colors["chart_background"])))
+        self.disk_chart.setBackgroundBrush(QBrush(QColor(colors["chart_background"])))
+        self.network_chart.setBackgroundBrush(QBrush(QColor(colors["chart_background"])))
+        
+        self.cpu_percent.setStyleSheet(f"color: {colors['label_text_color']}")
+        self.memory_label.setStyleSheet(f"color: {colors['label_text_color']}")
+        self.disk_label.setStyleSheet(f"color: {colors['label_text_color']}")
+        self.network_label.setStyleSheet(f"color: {colors['label_text_color']}")
+        
+        self.process_table.setStyleSheet(f"background-color: {colors['table_background']}; color: {colors['table_text_color']}")
+        self.cpu_table.setStyleSheet(f"background-color: {colors['table_background']}; color: {colors['table_text_color']}")
+        self.memory_table.setStyleSheet(f"background-color: {colors['table_background']}; color: {colors['table_text_color']}")
+        self.disk_table.setStyleSheet(f"background-color: {colors['table_background']}; color: {colors['table_text_color']}")
+        self.network_table.setStyleSheet(f"background-color: {colors['table_background']}; color: {colors['table_text_color']}")
+        self.settings_widget.setStyleSheet(f"background-color: {colors['background_color']}; color: {colors['table_text_color']}")
 
     def load_config(self):
         with open('config/config.yaml', 'r') as file:
             return yaml.safe_load(file)    
 
-    def setup_charts(self):
-        chart_theme = {
-                'background': QColor("#2B2B2B"),
-                'text': QColor("#FFFFFF"),
-                'grid': QColor("#3C3F41"),
-                'cpu_line': QColor("#FF6B6B"),
-                'memory_line': QColor("#FF6B6B"),#"#4ECDC4"
-                'disk_line': QColor("#FF6B6B"),
-                'network_line': QColor("#FF6B6B")
-            }       
+    def setup_chart(self, chart, series, title, y_axis_max, y_axis_tick_count=6):
+        colors = STYLE_SHEET["dark"]
         config = self.load_config()
-        self.max_count = config['monitoring']['process']['max_count']
 
-        # CPU Chart
-        self.cpu_series.setColor(chart_theme['cpu_line'])
-        self.cpu_chart.addSeries(self.cpu_series)  
-        self.cpu_chart.setBackgroundVisible(True)
-        self.cpu_chart.setBackgroundBrush(QBrush(chart_theme['background']))
-        self.cpu_chart.setTitleBrush(QBrush(chart_theme['text']))
-        self.cpu_chart.setTitle("CPU Usage %")
-        self.cpu_chart.legend().hide()  # Hide legend for cleaner look
-        self.cpu_chart.setAnimationOptions(QChart.SeriesAnimations)  # smooth animations
+        # Set series color
+        series.setColor(QColor(colors['line']))
+        chart.addSeries(series)
         
+        # Chart background and title
+        chart.setBackgroundVisible(True)
+        chart.setBackgroundBrush(QBrush(QColor(colors['chart_background'])))
+        chart.setTitleBrush(QBrush(QColor(colors['chart_text'])))
+        chart.setTitle(title)
+        chart.legend().hide()
+        chart.setAnimationOptions(QChart.SeriesAnimations)
+
+        # Axis configuration
         axis_x = QValueAxis()
         axis_y = QValueAxis()
         axis_x.setLabelsVisible(False)
-        axis_x.setLabelsColor(chart_theme['text'])
-        axis_y.setLabelsColor(chart_theme['text'])
-        axis_x.setGridLineColor(chart_theme['grid'])
-        axis_y.setGridLineColor(chart_theme['grid'])
+        axis_x.setLabelsColor(QColor(colors['chart_text']))
+        axis_y.setLabelsColor(QColor(colors['chart_text']))
+        axis_x.setGridLineColor(QColor(colors['chart_grid']))
+        axis_y.setGridLineColor(QColor(colors['chart_grid']))
         axis_x.setRange(0, self.max_data_points)
-        axis_y.setRange(0, 100)
-        axis_y.setTickCount(6)  # More readable tick intervals
-        self.cpu_chart.addAxis(axis_x, Qt.AlignBottom)
-        self.cpu_chart.addAxis(axis_y, Qt.AlignLeft)
-        self.cpu_series.attachAxis(axis_x)
-        self.cpu_series.attachAxis(axis_y)
-        cpu_pen = QPen(chart_theme['cpu_line'])
-        cpu_pen.setWidth(config['gui']['pen_thickness'])
-        self.cpu_series.setPen(cpu_pen)
+        axis_y.setRange(0, y_axis_max)
+        axis_y.setTickCount(y_axis_tick_count)
 
-        # Memory Chart - Create new axes instances
-        self.memory_series.setColor(QColor("#FF6B6B"))
-        self.memory_chart.setBackgroundVisible(True)
-        self.memory_chart.setBackgroundBrush(QBrush(chart_theme['background']))
-        self.memory_chart.setTitleBrush(QBrush(chart_theme['text']))    
-        self.memory_chart.addSeries(self.memory_series)
-        self.memory_chart.setTitle("Memory Usage %")
-        self.memory_chart.legend().hide()
-        self.memory_chart.setAnimationOptions(QChart.SeriesAnimations)
+        # Attach axes to chart
+        chart.addAxis(axis_x, Qt.AlignBottom)
+        chart.addAxis(axis_y, Qt.AlignLeft)
+        series.attachAxis(axis_x)
+        series.attachAxis(axis_y)
 
-        memory_x = QValueAxis()
-        memory_y = QValueAxis()
-        memory_x.setLabelsVisible(False)
-        memory_x.setLabelsColor(chart_theme['text'])
-        memory_y.setLabelsColor(chart_theme['text'])
-        memory_x.setGridLineColor(chart_theme['grid'])
-        memory_y.setGridLineColor(chart_theme['grid'])        
-        memory_x.setRange(0, self.max_data_points)
-        memory_y.setRange(0, 100)
-        axis_y.setTickCount(6)
-        self.memory_chart.addAxis(memory_x, Qt.AlignBottom)
-        self.memory_chart.addAxis(memory_y, Qt.AlignLeft)
-        self.memory_series.attachAxis(memory_x)
-        self.memory_series.attachAxis(memory_y)
-        memory_pen = QPen(chart_theme['memory_line'])
-        memory_pen.setWidth(config['gui']['pen_thickness'])
-        self.memory_series.setPen(memory_pen)
+        # Set the pen for the series line
+        pen = QPen(QColor(colors['line']))
+        pen.setWidth(config['gui']['pen_thickness'])
+        series.setPen(pen)     
 
-        # Disk Chart - Create new axes instances
-        self.disk_series.setColor(QColor("#FF6B6B"))
-        self.disk_chart.setBackgroundVisible(True)
-        self.disk_chart.setBackgroundBrush(QBrush(chart_theme['background']))
-        self.disk_chart.setTitleBrush(QBrush(chart_theme['text']))    
-        self.disk_chart.addSeries(self.disk_series)
-        self.disk_chart.setTitle("Disk Usage %")
-        self.disk_chart.legend().hide()
-        self.disk_chart.setAnimationOptions(QChart.SeriesAnimations)
+        # Shadow effect to the chart
+        shadow = QGraphicsDropShadowEffect()
+        shadow.setBlurRadius(15)
+        shadow.setOffset(5, 5)
+        shadow.setColor(QColor(0, 0, 0, 150))
+        chart.setGraphicsEffect(shadow)
 
-        disk_x = QValueAxis()
-        disk_y = QValueAxis()
-        disk_x.setLabelsVisible(False)
-        disk_x.setLabelsColor(chart_theme['text'])
-        disk_y.setLabelsColor(chart_theme['text'])
-        disk_x.setGridLineColor(chart_theme['grid'])
-        disk_y.setGridLineColor(chart_theme['grid'])        
-        disk_x.setRange(0, self.max_data_points)
-        disk_y.setRange(0, 100)
-        self.disk_chart.addAxis(disk_x, Qt.AlignBottom)
-        self.disk_chart.addAxis(disk_y, Qt.AlignLeft)
-        self.disk_series.attachAxis(disk_x)
-        self.disk_series.attachAxis(disk_y)
-        disk_pen = QPen(chart_theme['disk_line'])
-        disk_pen.setWidth(config['gui']['pen_thickness'])
-        self.disk_series.setPen(disk_pen)
+        return axis_y 
 
-        #network Chart
-        self.max_network_value = 100
-        self.network_series.setColor(QColor("#FF6B6B"))
-        self.network_chart.setBackgroundVisible(True)
-        self.network_chart.setBackgroundBrush(QBrush(chart_theme['background']))
-        self.network_chart.setTitleBrush(QBrush(chart_theme['text']))    
-        self.network_chart.addSeries(self.network_series)
-        self.network_chart.setTitle("Network Usage Kbps")
-        self.network_chart.legend().hide()
-        self.network_chart.setAnimationOptions(QChart.SeriesAnimations)
+    def setup_ui(self):
+        config = self.load_config()
+        self.max_count = config['monitoring']['process']['max_count']
 
-        network_x = QValueAxis()
-        self.network_y = QValueAxis()
-        network_x.setLabelsVisible(False)
-        network_x.setLabelsColor(chart_theme['text'])
-        self.network_y.setLabelsColor(chart_theme['text'])
-        network_x.setGridLineColor(chart_theme['grid'])
-        self.network_y.setGridLineColor(chart_theme['grid'])        
-        network_x.setRange(0, self.max_data_points)
-        self.network_y.setRange(0, self.max_network_value)
-        self.network_chart.addAxis(network_x, Qt.AlignBottom)
-        self.network_chart.addAxis(self.network_y, Qt.AlignLeft)
-        self.network_series.attachAxis(network_x)
-        self.network_series.attachAxis(self.network_y)
-        network_pen = QPen(chart_theme['network_line'])
-        network_pen.setWidth(config['gui']['pen_thickness'])
-        self.network_series.setPen(network_pen)        
-
-    def setup_ui(self): 
         self.setWindowTitle("AutoGuard")
         self.setMinimumSize(820, 600)
         
@@ -225,6 +160,14 @@ class MainWindow(QMainWindow):
         overview_widget = QWidget()
         overview_layout = QGridLayout(overview_widget)
 
+        # charts
+        self.setup_chart(self.cpu_chart, self.cpu_series, "CPU Usage %", y_axis_max=100)
+        self.setup_chart(self.memory_chart, self.memory_series, "Memory Usage %", y_axis_max=100)
+        self.setup_chart(self.disk_chart, self.disk_series, "Disk Usage %", y_axis_max=100)
+    
+        self.max_network_value = 100
+        self.network_y = self.setup_chart(self.network_chart, self.network_series, "Network Usage Kbps", y_axis_max=self.max_network_value)
+
         # Add labels to overview tab
         overview_layout.addWidget(self.cpu_percent, 0, 0)
         overview_layout.addWidget(QChartView(self.cpu_chart), 1, 0)
@@ -235,7 +178,6 @@ class MainWindow(QMainWindow):
         overview_layout.addWidget(self.network_label, 2, 1)
         overview_layout.addWidget(QChartView(self.network_chart), 3, 1)        
         #tabs.addTab(overview_widget, "Overview")
-
 
         # Processes tab
         processes_widget = QWidget()
@@ -418,14 +360,15 @@ class MainWindow(QMainWindow):
         theme_group = QGroupBox("Theme")
         theme_layout = QHBoxLayout()
 
-        self.light_button = QRadioButton("Light Mode")
-        self.light_button.toggled.connect(self.set_light_mode)
-        theme_layout.addWidget(self.light_button)
-
         self.dark_button = QRadioButton("Dark Mode")
         self.dark_button.setChecked(True)        
         self.dark_button.toggled.connect(self.set_dark_mode)
         theme_layout.addWidget(self.dark_button)
+
+
+        self.light_button = QRadioButton("Light Mode")
+        self.light_button.toggled.connect(self.set_light_mode)
+        theme_layout.addWidget(self.light_button)
 
         theme_group.setLayout(theme_layout)
 
