@@ -1,4 +1,4 @@
-from PyQt5.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, QTabWidget, QPushButton, QLabel, QTableWidget, QTableWidgetItem, QHeaderView, QGroupBox, QCheckBox, QButtonGroup, QRadioButton)
+from PyQt5.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, QTabWidget, QPushButton, QLabel, QTableWidget, QTableWidgetItem, QHeaderView, QGroupBox, QCheckBox, QButtonGroup, QRadioButton, QApplication)
 from PyQt5.QtChart import QChart, QChartView, QLineSeries, QValueAxis
 from PyQt5.QtCore import Qt
 from PyQt5.QtGui import QColor, QBrush, QPen, QFont
@@ -9,15 +9,18 @@ import sys
 
 class MainWindow(QMainWindow):
     def __init__(self):
+        super().__init__()  
+
         #font
-        font_size = 200
-        font = QFont()
-        font.setFamily("Arial")
-        font.setPointSize(font_size)
-        super().__init__()
+        self.font_size = 10
+        self.font = QFont()
+        self.font.setFamily("Arial")
+        self.font.setPointSize(self.font_size)
+        self.app = QApplication(sys.argv)
+        self.app.setFont(self.font)
+
         #overview label initialization
         self.cpu_percent = QLabel("Cpu Usage: --")
-        self.cpu_percent.setFont(font)
         self.cpu_temp_label = QLabel("--")
         self.current_processes = []
         self.memory_label = QLabel("Memory Usage: --")
@@ -42,7 +45,7 @@ class MainWindow(QMainWindow):
         
         self.setup_charts()
         self.setup_ui()  
-        
+
     def set_dark_mode(self):
         #self.setStyleSheet(STYLE_SHEET["dark"])
         self.cpu_chart.setBackgroundBrush(QBrush(QColor("#2B2B2B")))
@@ -349,7 +352,7 @@ class MainWindow(QMainWindow):
             ("Total Disk Space", "--"),
             ("Used Disk Space", "--"),
             ("Free Disk Space", "--"),
-            ("Disk Usag", "--"),
+            ("Disk Usage", "--"),
             ("Read Count", "--"),
             ("Write Count", "--"),
             ("Read Bytes", "--"),
@@ -401,32 +404,33 @@ class MainWindow(QMainWindow):
         #Settings tab
         self.settings_widget = QWidget()
         self.settings_layout = QVBoxLayout(self.settings_widget)
+        
         #background running option
         background_group = QGroupBox("Background Running")
         background_layout = QVBoxLayout()
         self.background_checkbox = QCheckBox("Run in background")
         self.background_checkbox.setChecked(True)
         
+        background_layout.addWidget(self.background_checkbox)
+        background_group.setLayout(background_layout)
+        
         #Theme selection
-        self.theme_group = QButtonGroup()
-        self.theme_group.setExclusive(True)
+        theme_group = QGroupBox("Theme")
+        theme_layout = QHBoxLayout()
 
         self.light_button = QRadioButton("Light Mode")
         self.light_button.toggled.connect(self.set_light_mode)
-        self.theme_group.addButton(self.light_button)
+        theme_layout.addWidget(self.light_button)
 
         self.dark_button = QRadioButton("Dark Mode")
         self.dark_button.setChecked(True)        
         self.dark_button.toggled.connect(self.set_dark_mode)
-        self.theme_group.addButton(self.dark_button)
-        theme_layout = QHBoxLayout()
         theme_layout.addWidget(self.dark_button)
-        theme_layout.addWidget(self.light_button)
 
-        background_layout.addWidget(self.background_checkbox)
-        background_group.setLayout(background_layout)
+        theme_group.setLayout(theme_layout)
+
         self.settings_layout.addWidget(background_group)
-        self.settings_layout.addLayout(theme_layout)
+        self.settings_layout.addWidget(theme_group)
         self.settings_layout.addStretch()
 
         #read only
@@ -436,9 +440,8 @@ class MainWindow(QMainWindow):
         self.disk_table.setEditTriggers(QTableWidget.NoEditTriggers)
         self.network_table.setEditTriggers(QTableWidget.NoEditTriggers)
         
+        # add all tabs and load set_dark_mode by default
         self.set_dark_mode()
-
-        # add all tabs
         tabs.addTab(overview_widget, "Overview")
         tabs.addTab(cpu_widget, "CPU Details")
         tabs.addTab(memory_widget, "Memory Details")
@@ -564,4 +567,4 @@ class MainWindow(QMainWindow):
             self.hide()
         else:
             event.accept()
-            sys.exit(0)        
+            sys.exit(0)    

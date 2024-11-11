@@ -52,15 +52,21 @@ class SystemMonitor:
         write_time = 0
         num_partitions = 0
 
+        # Get total disk usage for the whole disk (root partition)
+        try:
+            total_usage = psutil.disk_usage('/')
+            total = total_usage.total
+            free = total_usage.free
+            used = total_usage.used
+            percent = total_usage.percent
+        except Exception as e:
+            print(f"Error getting total disk usage: {e}")
+
         for partition in psutil.disk_partitions():
             try:
                 usage = psutil.disk_usage(partition.mountpoint)
                 io_counters = psutil.disk_io_counters(perdisk=True).get(partition.device.split('/')[-1])
 
-                total += usage.total
-                used += usage.used
-                free += usage.free
-                percent += usage.percent
                 read_count += io_counters.read_count if io_counters else 0
                 write_count += io_counters.write_count if io_counters else 0
                 read_bytes += io_counters.read_bytes if io_counters else 0
@@ -71,10 +77,8 @@ class SystemMonitor:
 
             except (KeyError, PermissionError):
                 continue
-        # Calculate average values
-        if num_partitions > 0:
-            percent = round(percent / num_partitions, 2)
 
+        # Return disk metrics
         disk_metrics = {
             'total': total,
             'used': used,
@@ -89,6 +93,7 @@ class SystemMonitor:
         }
 
         return disk_metrics
+
 
     def get_network_metrics(self,interval = 1):
         # Capture bytes sent/received at the start
