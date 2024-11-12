@@ -47,98 +47,285 @@ class MainWindow(QMainWindow):
         
         self.setup_ui()  
 
-    def set_dark_mode(self):
-        colors = STYLE_SHEET["dark"]
-        self.setStyleSheet(f"background-color: {colors['background_color']};")
-        self.cpu_chart.setBackgroundBrush(QBrush(QColor(colors["chart_background"])))
-        self.memory_chart.setBackgroundBrush(QBrush(QColor(colors["chart_background"])))
-        self.disk_chart.setBackgroundBrush(QBrush(QColor(colors["chart_background"])))
-        self.network_chart.setBackgroundBrush(QBrush(QColor(colors["chart_background"])))
+    def set_theme(self, mode='dark'):
+        """
+        Set the application theme to either dark or light mode
+        Args:
+            mode (str): 'dark' or 'light'
+        """
+        colors = STYLE_SHEET[mode]
         
-        self.cpu_percent.setStyleSheet(f"color: {colors['label_text_color']}")
-        self.memory_label.setStyleSheet(f"color: {colors['label_text_color']}")
-        self.disk_label.setStyleSheet(f"color: {colors['label_text_color']}")
-        self.network_label.setStyleSheet(f"color: {colors['label_text_color']}")
+        # Main window and tab widget styling
+        self.setStyleSheet(f"""
+            QMainWindow {{
+                background-color: {colors['background_color']};
+                border: 1px solid {colors['border_color']};
+            }}
+            
+            QTabWidget::pane {{
+                border: 1px solid {colors['border_color']};
+                background-color: {colors['background_color']};
+            }}
+            
+            QTabWidget::tab-bar {{
+                alignment: left;
+            }}
+            
+            QTabBar::tab {{
+                background-color: {colors['background_color']};
+                color: {colors['text_color']};
+                padding: 8px 20px;
+                border: 1px solid {colors['border_color']};
+                border-bottom: none;
+                margin-right: 2px;
+            }}
+            
+            QTabBar::tab:selected {{
+                background-color: {colors['grid_color']};
+                border-bottom: none;
+            }}
+            
+            QTabBar::tab:hover {{
+                background-color: {colors['grid_color']};
+            }}
+        """)
         
-        self.process_table.setStyleSheet(f"background-color: {colors['table_background']}; color: {colors['table_text_color']}")
-        self.cpu_table.setStyleSheet(f"background-color: {colors['table_background']}; color: {colors['table_text_color']}")
-        self.memory_table.setStyleSheet(f"background-color: {colors['table_background']}; color: {colors['table_text_color']}")
-        self.disk_table.setStyleSheet(f"background-color: {colors['table_background']}; color: {colors['table_text_color']}")
-        self.network_table.setStyleSheet(f"background-color: {colors['table_background']}; color: {colors['table_text_color']}")
-        self.settings_widget.setStyleSheet(f"background-color: {colors['background_color']}; color: {colors['table_text_color']}")
+        # Charts styling
+        charts = [self.cpu_chart, self.memory_chart, self.disk_chart, self.network_chart]
+        for chart in charts:
+            chart.setBackgroundBrush(QBrush(QColor(colors["chart_background"])))
+            chart.setTitleBrush(QBrush(QColor(colors["text_color"])))
+            
+            # Update chart axes
+            for axis in chart.axes():
+                axis.setLabelsColor(QColor(colors["axis_labels"]))
+                axis.setGridLineColor(QColor(colors["grid_lines"]))
+                if isinstance(axis, QValueAxis):
+                    pen = QPen(QColor(colors["axis_color"]))
+                    axis.setLinePen(pen)
+            
+            # Update series colors
+            for series in chart.series():
+                pen = QPen(QColor(colors["line"]))
+                pen.setWidth(self.load_config()['gui']['pen_thickness'])
+                series.setPen(pen)
+        
+        # Labels styling
+        labels = [self.cpu_percent, self.memory_label, self.disk_label, self.network_label]
+        label_style = f"""
+            QLabel {{
+                color: {colors['label_text_color']};
+                border: none;
+                padding: 5px;
+            }}
+        """
+        for label in labels:
+            label.setStyleSheet(label_style)
+        
+        # Tables styling
+        tables = [
+            self.process_table, self.cpu_table, self.memory_table, 
+            self.disk_table, self.network_table
+        ]
+        
+        table_style = f"""
+            QTableWidget {{
+                background-color: {colors['table_background']};
+                color: {colors['table_text_color']};
+                gridline-color: {colors['border_color']};
+                border: 1px solid {colors['border_color']};
+            }}
+            
+            QTableWidget::item {{
+                padding: 5px;
+            }}
+            
+            QTableWidget::item:selected {{
+                background-color: {colors['grid_color']};
+                color: {colors['text_color']};
+            }}
+            
+            QHeaderView::section {{
+                background-color: {colors['background_color']};
+                color: {colors['text_color']};
+                border: 1px solid {colors['border_color']};
+                padding: 5px;
+            }}
+            
+            QHeaderView::section:vertical {{
+                background-color: {colors['background_color']};
+                color: {colors['text_color']};
+            }}
+            
+            QTableCornerButton::section {{
+                background-color: {colors['background_color']};
+                border: 1px solid {colors['border_color']};
+            }}
+            
+            QScrollBar:vertical {{
+                background: {colors['background_color']};
+                border: 1px solid {colors['border_color']};
+                width: 15px;
+                margin: 15px 0 15px 0;
+            }}
+            
+            QScrollBar::handle:vertical {{
+                background: {colors['grid_color']};
+                min-height: 30px;
+            }}
+            
+            QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{
+                background: none;
+            }}
+            
+            QScrollBar:horizontal {{
+                background: {colors['background_color']};
+                border: 1px solid {colors['border_color']};
+                height: 15px;
+                margin: 0 15px 0 15px;
+            }}
+            
+            QScrollBar::handle:horizontal {{
+                background: {colors['grid_color']};
+                min-width: 30px;
+            }}
+            
+            QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal {{
+                background: none;
+            }}
+                 
+        for table in tables:
+            table.setStyleSheet(table_style)
+            
+            # Fix index column styling
+            for i in range(table.rowCount()):
+                index_item = table.verticalHeaderItem(i)
+                if index_item:
+                    index_item.setForeground(QBrush(QColor(colors['text_color'])))
+        
+        # Settings widget styling
+        settings_style = f"""
+            QWidget {{
+                background-color: {colors['background_color']};
+                color: {colors['table_text_color']};
+            }}
+            
+            QPushButton {{
+                background-color: {colors['background_color']};
+                color: {colors['text_color']};
+                border: 1px solid {colors['border_color']};
+                padding: 5px 10px;
+                min-width: 80px;
+            }}
+            
+            QPushButton:hover {{
+                background-color: {colors['grid_color']};
+            }}
+            
+            QPushButton:pressed {{
+                background-color: {colors['chart_grid']};
+            }}
+            
+            QComboBox {{
+                background-color: {colors['background_color']};
+                color: {colors['text_color']};
+                border: 1px solid {colors['border_color']};
+                padding: 5px;
+                min-width: 100px;
+            }}
+            
+            QComboBox::drop-down {{
+                border: 1px solid {colors['border_color']};
+            }}
+            
+            QComboBox::down-arrow {{
+                width: 12px;
+                height: 12px;
+            }}
+            
+            QComboBox:hover {{
+                background-color: {colors['grid_color']};
+            }}
+            
+            QComboBox QAbstractItemView {{
+                background-color: {colors['background_color']};
+                color: {colors['text_color']};
+                selection-background-color: {colors['grid_color']};
+                selection-color: {colors['text_color']};
+                border: 1px solid {colors['border_color']};
+            }}
+        """
+        self.settings_widget.setStyleSheet(settings_style)
+        
+        if hasattr(self, 'overview_tab'):
+            self.overview_tab.setStyleSheet(overview_style)
 
+    def set_dark_mode(self):
+        """Switch to dark mode"""
+        self.set_theme('dark')
 
     def set_light_mode(self):
-        colors = STYLE_SHEET["light"]
-        self.setStyleSheet(f"background-color: {colors['background_color']};")        
-        self.cpu_chart.setBackgroundBrush(QBrush(QColor(colors["chart_background"])))
-        self.memory_chart.setBackgroundBrush(QBrush(QColor(colors["chart_background"])))
-        self.disk_chart.setBackgroundBrush(QBrush(QColor(colors["chart_background"])))
-        self.network_chart.setBackgroundBrush(QBrush(QColor(colors["chart_background"])))
-        
-        self.cpu_percent.setStyleSheet(f"color: {colors['label_text_color']}")
-        self.memory_label.setStyleSheet(f"color: {colors['label_text_color']}")
-        self.disk_label.setStyleSheet(f"color: {colors['label_text_color']}")
-        self.network_label.setStyleSheet(f"color: {colors['label_text_color']}")
-        
-        self.process_table.setStyleSheet(f"background-color: {colors['table_background']}; color: {colors['table_text_color']}")
-        self.cpu_table.setStyleSheet(f"background-color: {colors['table_background']}; color: {colors['table_text_color']}")
-        self.memory_table.setStyleSheet(f"background-color: {colors['table_background']}; color: {colors['table_text_color']}")
-        self.disk_table.setStyleSheet(f"background-color: {colors['table_background']}; color: {colors['table_text_color']}")
-        self.network_table.setStyleSheet(f"background-color: {colors['table_background']}; color: {colors['table_text_color']}")
-        self.settings_widget.setStyleSheet(f"background-color: {colors['background_color']}; color: {colors['table_text_color']}")
+        """Switch to light mode"""
+        self.set_theme('light')
 
     def load_config(self):
         with open('config/config.yaml', 'r') as file:
             return yaml.safe_load(file)    
 
     def setup_chart(self, chart, series, title, y_axis_max, y_axis_tick_count=6):
-        colors = STYLE_SHEET["dark"]
         config = self.load_config()
+        colors = STYLE_SHEET["dark"]  # Default to dark theme initially
 
-        # Set series color
+        # Set up series
         series.setColor(QColor(colors['line']))
         chart.addSeries(series)
         
-        # Chart background and title
+        # Chart configuration
         chart.setBackgroundVisible(True)
         chart.setBackgroundBrush(QBrush(QColor(colors['chart_background'])))
-        chart.setTitleBrush(QBrush(QColor(colors['chart_text'])))
-        chart.setTitle(title)
+        chart.setTitleBrush(QBrush(QColor(colors['text_color'])))
         chart.legend().hide()
         chart.setAnimationOptions(QChart.SeriesAnimations)
 
-        # Axis configuration
+        # Configure axes
         axis_x = QValueAxis()
         axis_y = QValueAxis()
+        
+        # X-axis setup
         axis_x.setLabelsVisible(False)
-        axis_x.setLabelsColor(QColor(colors['chart_text']))
-        axis_y.setLabelsColor(QColor(colors['chart_text']))
-        axis_x.setGridLineColor(QColor(colors['chart_grid']))
-        axis_y.setGridLineColor(QColor(colors['chart_grid']))
         axis_x.setRange(0, self.max_data_points)
+        axis_x.setGridLineColor(QColor(colors['chart_grid']))
+        axis_x.setLabelsColor(QColor(colors['axis_labels']))
+        pen_x = QPen(QColor(colors["axis_color"]))
+        axis_x.setLinePen(pen_x)
+        
+        # Y-axis setup
         axis_y.setRange(0, y_axis_max)
         axis_y.setTickCount(y_axis_tick_count)
-
-        # Attach axes to chart
+        axis_y.setGridLineColor(QColor(colors['chart_grid']))
+        axis_y.setLabelsColor(QColor(colors['axis_labels']))
+        pen_y = QPen(QColor(colors["axis_color"]))
+        axis_y.setLinePen(pen_y)
+        
+        # Attach axes
         chart.addAxis(axis_x, Qt.AlignBottom)
         chart.addAxis(axis_y, Qt.AlignLeft)
         series.attachAxis(axis_x)
         series.attachAxis(axis_y)
 
-        # Set the pen for the series line
+        # Series line style
         pen = QPen(QColor(colors['line']))
         pen.setWidth(config['gui']['pen_thickness'])
-        series.setPen(pen)     
+        series.setPen(pen)
 
-        # Shadow effect to the chart
+        # Add shadow effect
         shadow = QGraphicsDropShadowEffect()
         shadow.setBlurRadius(15)
         shadow.setOffset(5, 5)
         shadow.setColor(QColor(0, 0, 0, 150))
         chart.setGraphicsEffect(shadow)
 
-        return axis_y 
+        return axis_y
 
     def setup_ui(self):
         config = self.load_config()
