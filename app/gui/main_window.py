@@ -193,7 +193,7 @@ class MainWindow(QMainWindow):
             QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal {{
                 background: none;
             }}
-                 
+            """     
         for table in tables:
             table.setStyleSheet(table_style)
             
@@ -286,7 +286,7 @@ class MainWindow(QMainWindow):
         chart.setTitleBrush(QBrush(QColor(colors['text_color'])))
         chart.legend().hide()
         chart.setAnimationOptions(QChart.SeriesAnimations)
-
+        
         # Configure axes
         axis_x = QValueAxis()
         axis_y = QValueAxis()
@@ -296,6 +296,9 @@ class MainWindow(QMainWindow):
         axis_x.setRange(0, self.max_data_points)
         axis_x.setGridLineColor(QColor(colors['chart_grid']))
         axis_x.setLabelsColor(QColor(colors['axis_labels']))
+        axis_x.setGridLineVisible(False)
+        axis_x.setLabelsVisible(False)
+        axis_x.setTickCount(0)
         pen_x = QPen(QColor(colors["axis_color"]))
         axis_x.setLinePen(pen_x)
         
@@ -318,7 +321,7 @@ class MainWindow(QMainWindow):
         pen.setWidth(config['gui']['pen_thickness'])
         series.setPen(pen)
 
-        # Add shadow effect
+        #Add shadow effect
         shadow = QGraphicsDropShadowEffect()
         shadow.setBlurRadius(15)
         shadow.setOffset(5, 5)
@@ -393,9 +396,10 @@ class MainWindow(QMainWindow):
             header.setSectionResizeMode(i, QHeaderView.Stretch)
         
         header.setDefaultAlignment(Qt.AlignLeft)
+        self.process_table.verticalHeader().setVisible(False)
         processes_layout.addWidget(self.process_table)
         #tabs.addTab(processes_widget, "Processes")        
-
+        
         # Cpu details tab
         cpu_widget = QWidget()
         cpu_layout = QVBoxLayout(cpu_widget)  
@@ -407,7 +411,7 @@ class MainWindow(QMainWindow):
         cpu_header = self.cpu_table.horizontalHeader()
         for i in range(self.cpu_table.columnCount()):
             cpu_header.setSectionResizeMode(i, QHeaderView.Stretch)
-
+        
         # Populate the table with CPU details
         cpu_metrics = [
             ("CPU Usage", "--"),
@@ -428,6 +432,7 @@ class MainWindow(QMainWindow):
             self.cpu_table.setItem(row, 0, QTableWidgetItem(metric_name))
             self.cpu_table.setItem(row, 1, QTableWidgetItem(str(metric_value)))
 
+        self.cpu_table.verticalHeader().setVisible(False)
         self.cpu_table.horizontalHeader().setStretchLastSection(True)
         cpu_layout.addWidget(self.cpu_table)
         #tabs.addTab(cpu_widget, "CPU Details")
@@ -460,6 +465,7 @@ class MainWindow(QMainWindow):
             self.memory_table.setItem(row, 0, QTableWidgetItem(metric_name))
             self.memory_table.setItem(row, 1, QTableWidgetItem(str(metric_value)))
 
+        self.memory_table.verticalHeader().setVisible(False)
         self.memory_table.horizontalHeader().setStretchLastSection(True)
         memory_layout.addWidget(self.memory_table)
         #tabs.addTab(memory_widget, "Memory Details")
@@ -494,6 +500,7 @@ class MainWindow(QMainWindow):
             self.disk_table.setItem(row, 0, QTableWidgetItem(metric_name))
             self.disk_table.setItem(row, 1, QTableWidgetItem(str(metric_value)))
 
+        self.disk_table.verticalHeader().setVisible(False)
         self.disk_table.horizontalHeader().setStretchLastSection(True)
         disk_layout.addWidget(self.disk_table)
         #tabs.addTab(disk_widget, "Disk Details")
@@ -526,6 +533,7 @@ class MainWindow(QMainWindow):
             self.network_table.setItem(row, 0, QTableWidgetItem(metric_name))
             self.network_table.setItem(row, 1, QTableWidgetItem(str(metric_value)))
 
+        self.network_table.verticalHeader().setVisible(False)
         self.network_table.horizontalHeader().setStretchLastSection(True)
         network_layout.addWidget(self.network_table)
         #tabs.addTab(network_widget, "Network Details")    
