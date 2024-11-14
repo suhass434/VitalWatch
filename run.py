@@ -11,7 +11,7 @@ from PyQt5.QtWidgets import QApplication
 from PyQt5.QtGui import QIcon
 from app.gui.main_window import MainWindow
 from app.gui.system_tray import SystemMonitorTray
-from app.gui.styles import STYLE_SHEET
+#from app.gui.styles import STYLE_SHEET
 from src.monitors.system_monitor import SystemMonitor
 from src.monitors.process_monitor import ProcessMonitor
 from src.database.db_handler import DatabaseHandler
@@ -82,7 +82,7 @@ def main():
     
     # Create Qt application
     app = QApplication(sys.argv)    # python run.py -> size = 1
-    app.setStyleSheet(STYLE_SHEET)
+    #app.setStyleSheet(STYLE_SHEET)
     
     # Set application icon
     icon_path = os.path.join(os.path.dirname(__file__), 'app/icons/icon.jpeg')

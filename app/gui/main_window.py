@@ -93,9 +93,11 @@ class MainWindow(QMainWindow):
         # Charts styling
         charts = [self.cpu_chart, self.memory_chart, self.disk_chart, self.network_chart]
         for chart in charts:
-            chart.setBackgroundBrush(QBrush(QColor(colors["chart_background"])))
-            chart.setTitleBrush(QBrush(QColor(colors["text_color"])))
             
+            chart.setTitleBrush(QBrush(QColor(colors["text_color"])))
+            chart.setPlotAreaBackgroundBrush(QBrush(QColor(colors["chart_background"])))
+            chart.setPlotAreaBackgroundVisible(True)
+                        
             # Update chart axes
             for axis in chart.axes():
                 axis.setLabelsColor(QColor(colors["axis_labels"]))
@@ -281,8 +283,7 @@ class MainWindow(QMainWindow):
         chart.addSeries(series)
         
         # Chart configuration
-        chart.setBackgroundVisible(True)
-        chart.setBackgroundBrush(QBrush(QColor(colors['chart_background'])))
+        chart.setBackgroundVisible(False)  # Disable background
         chart.setTitleBrush(QBrush(QColor(colors['text_color'])))
         chart.legend().hide()
         chart.setAnimationOptions(QChart.SeriesAnimations)
@@ -320,15 +321,9 @@ class MainWindow(QMainWindow):
         pen = QPen(QColor(colors['line']))
         pen.setWidth(config['gui']['pen_thickness'])
         series.setPen(pen)
-
-        #Add shadow effect
-        shadow = QGraphicsDropShadowEffect()
-        shadow.setBlurRadius(15)
-        shadow.setOffset(5, 5)
-        shadow.setColor(QColor(0, 0, 0, 150))
-        chart.setGraphicsEffect(shadow)
-
+        
         return axis_y
+
 
     def setup_ui(self):
         config = self.load_config()
