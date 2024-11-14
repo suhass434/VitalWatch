@@ -2,9 +2,8 @@ from PyQt5.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QGr
                              QHeaderView, QGroupBox, QCheckBox, QButtonGroup, QRadioButton, QApplication, QGraphicsRectItem, QGraphicsDropShadowEffect)
 from PyQt5.QtChart import QChart, QChartView, QLineSeries, QValueAxis
 from PyQt5.QtCore import Qt
-from PyQt5.QtGui import QColor, QBrush, QPen, QFont
+from PyQt5.QtGui import QColor, QBrush, QPen, QFont, QPainter
 import threading
-#from app.gui.styles import STYLE_SHEET
 from app.gui.styleSheet import STYLE_SHEET
 import yaml
 import sys
@@ -48,11 +47,6 @@ class MainWindow(QMainWindow):
         self.setup_ui()  
 
     def set_theme(self, mode='dark'):
-        """
-        Set the application theme to either dark or light mode
-        Args:
-            mode (str): 'dark' or 'light'
-        """
         colors = STYLE_SHEET[mode]
         
         # Main window and tab widget styling
@@ -93,7 +87,6 @@ class MainWindow(QMainWindow):
         # Charts styling
         charts = [self.cpu_chart, self.memory_chart, self.disk_chart, self.network_chart]
         for chart in charts:
-            
             chart.setTitleBrush(QBrush(QColor(colors["text_color"])))
             chart.setPlotAreaBackgroundBrush(QBrush(QColor(colors["chart_background"])))
             chart.setPlotAreaBackgroundVisible(True)
@@ -105,6 +98,8 @@ class MainWindow(QMainWindow):
                 if isinstance(axis, QValueAxis):
                     pen = QPen(QColor(colors["axis_color"]))
                     axis.setLinePen(pen)
+            chart.setBackgroundVisible(False)
+            chart.setPlotAreaBackgroundVisible(True)
             
             # Update series colors
             for series in chart.series():
@@ -112,6 +107,24 @@ class MainWindow(QMainWindow):
                 pen.setWidth(self.load_config()['gui']['pen_thickness'])
                 series.setPen(pen)
         
+            chart_view = self.findChild(QChartView, chart.objectName())
+            for chart_view in self.findChildren(QChartView):
+                if chart_view:
+                    chart_view.setBackgroundBrush(QBrush(QColor(colors["chart_background"])))
+                    chart_view.setStyleSheet(f"""
+                        QChartView {{
+                            background-color: {colors['chart_background']};
+                            border: 2px solid {colors['border_color']};
+                            border-radius: 4px;
+                            border-radius: 8px;
+                            padding: 10px;
+                            margin: 5px;
+                        }}
+                    """)
+                shadow = chart_view.graphicsEffect()
+                if shadow:
+                    shadow.setColor(QColor(0, 0, 0, 80) if mode == 'light' else QColor(0, 0, 0, 120))
+
         # Labels styling
         labels = [self.cpu_percent, self.memory_label, self.disk_label, self.network_label]
         label_style = f"""
@@ -124,6 +137,25 @@ class MainWindow(QMainWindow):
         for label in labels:
             label.setStyleSheet(label_style)
         
+        button_style = f"""
+            QPushButton {{
+                background-color: {colors['background_color']};
+                color: {colors['text_color']};
+                border: 1px solid {colors['border_color']};
+                padding: 5px 15px;
+                border-radius: 4px;
+            }}
+            
+            QPushButton:hover {{
+                background-color: {colors['grid_color']};
+            }}
+            
+            QPushButton:pressed {{
+                background-color: {colors['border_color']};
+            }}
+        """
+        self.show_all_button.setStyleSheet(button_style)
+
         # Tables styling
         tables = [
             self.process_table, self.cpu_table, self.memory_table, 
@@ -212,22 +244,6 @@ class MainWindow(QMainWindow):
                 color: {colors['table_text_color']};
             }}
             
-            QPushButton {{
-                background-color: {colors['background_color']};
-                color: {colors['text_color']};
-                border: 1px solid {colors['border_color']};
-                padding: 5px 10px;
-                min-width: 80px;
-            }}
-            
-            QPushButton:hover {{
-                background-color: {colors['grid_color']};
-            }}
-            
-            QPushButton:pressed {{
-                background-color: {colors['chart_grid']};
-            }}
-            
             QComboBox {{
                 background-color: {colors['background_color']};
                 color: {colors['text_color']};
@@ -278,6 +294,32 @@ class MainWindow(QMainWindow):
         config = self.load_config()
         colors = STYLE_SHEET["dark"]  # Default to dark theme initially
 
+        # Set unique object name for the chart
+        chart.setObjectName(f"{title.lower().replace(' ', '_')}_chart")
+        
+        # Create and style the chart view
+        chart_view = QChartView(chart)
+        chart_view.setObjectName(f"{title.lower().replace(' ', '_')}_view")
+        chart_view.setRenderHint(QPainter.Antialiasing)
+        chart_view.setBackgroundBrush(QBrush(QColor(colors["chart_background"])))
+
+
+        # Add container widget for border
+        container = QWidget()
+        container_layout = QVBoxLayout(container)
+        container_layout.setContentsMargins(1, 1, 1, 1)
+        container_layout.addWidget(chart_view)
+        
+        container.setStyleSheet(f"""
+            QWidget {{
+                background-color: {colors['chart_background']};
+                border: 2px solid {colors['border_color']};
+            }}
+        """)
+
+        chart.setPlotAreaBackgroundBrush(QBrush(QColor(colors["chart_background"])))
+        chart.setPlotAreaBackgroundVisible(True)
+
         # Set up series
         series.setColor(QColor(colors['line']))
         chart.addSeries(series)
@@ -321,12 +363,13 @@ class MainWindow(QMainWindow):
         pen = QPen(QColor(colors['line']))
         pen.setWidth(config['gui']['pen_thickness'])
         series.setPen(pen)
-        
-        return axis_y
+
+        return container, axis_y
 
 
     def setup_ui(self):
         config = self.load_config()
+        colors = STYLE_SHEET["dark"]
         self.max_count = config['monitoring']['process']['max_count']
 
         self.setWindowTitle("AutoGuard")
@@ -346,22 +389,22 @@ class MainWindow(QMainWindow):
         overview_layout = QGridLayout(overview_widget)
 
         # charts
-        self.setup_chart(self.cpu_chart, self.cpu_series, "CPU Usage %", y_axis_max=100)
-        self.setup_chart(self.memory_chart, self.memory_series, "Memory Usage %", y_axis_max=100)
-        self.setup_chart(self.disk_chart, self.disk_series, "Disk Usage %", y_axis_max=100)
+        cpu_chart_view, _ = self.setup_chart(self.cpu_chart, self.cpu_series, "CPU Usage %", y_axis_max=100)
+        memory_chart_view, _ = self.setup_chart(self.memory_chart, self.memory_series, "Memory Usage %", y_axis_max=100)
+        disk_chart_view, _ = self.setup_chart(self.disk_chart, self.disk_series, "Disk Usage %", y_axis_max=100)
     
         self.max_network_value = 100
-        self.network_y = self.setup_chart(self.network_chart, self.network_series, "Network Usage Kbps", y_axis_max=self.max_network_value)
+        network_chart_view, self.network_y = self.setup_chart(self.network_chart, self.network_series, "Network Usage Kbps", y_axis_max=self.max_network_value)
 
         # Add labels to overview tab
         overview_layout.addWidget(self.cpu_percent, 0, 0)
-        overview_layout.addWidget(QChartView(self.cpu_chart), 1, 0)
+        overview_layout.addWidget(cpu_chart_view, 1, 0)
         overview_layout.addWidget(self.memory_label, 0, 1)
-        overview_layout.addWidget(QChartView(self.memory_chart), 1, 1)
+        overview_layout.addWidget(memory_chart_view, 1, 1)
         overview_layout.addWidget(self.disk_label, 2, 0)
-        overview_layout.addWidget(QChartView(self.disk_chart), 3, 0)        
+        overview_layout.addWidget(disk_chart_view, 3, 0)        
         overview_layout.addWidget(self.network_label, 2, 1)
-        overview_layout.addWidget(QChartView(self.network_chart), 3, 1)        
+        overview_layout.addWidget(network_chart_view, 3, 1)       
         #tabs.addTab(overview_widget, "Overview")
 
         # Processes tab
@@ -514,14 +557,10 @@ class MainWindow(QMainWindow):
 
         # Populate the table with network details
         network_metrics = [
-            ("Upload Speed", "--"),  # in kb per second
-            ("Download Speed", "--"),  # in kb per second
-            ("Total Data Sent", "--"),  # total kb sent
-            ("Total Data Received", "--"),  # total kb received
-            # ("Packets Sent", "--"),
-            # ("Packets Received", "--"),
-            # ("Errors Sent", "--"),
-            # ("Errors Received", "--"),
+            ("Upload Speed", "--"),
+            ("Download Speed", "--"),
+            ("Total Data Sent", "--"),
+            ("Total Data Received", "--"),
         ]
 
         for row, (metric_name, metric_value) in enumerate(network_metrics):
@@ -646,10 +685,6 @@ class MainWindow(QMainWindow):
         self.network_table.setItem(1, 1, QTableWidgetItem(f"{metrics['network']['download_speed'] / 1024:.2f} MB/s" if metrics['network']['download_speed'] >= 1024 else f"{metrics['network']['download_speed']} kb/s"))
         self.network_table.setItem(2, 1, QTableWidgetItem(f"{metrics['network']['total_data_sent'] / (1024**2):.2f} GB" if metrics['network']['total_data_sent'] >= 1024**2 else f"{metrics['network']['total_data_sent'] / 1024:.2f} MB" if metrics['network']['total_data_sent'] >= 1024 else f"{metrics['network']['total_data_sent']} kb"))
         self.network_table.setItem(3, 1, QTableWidgetItem(f"{metrics['network']['total_data_received'] / (1024**2):.2f} GB" if metrics['network']['total_data_received'] >= 1024**2 else f"{metrics['network']['total_data_received'] / 1024:.2f} MB" if metrics['network']['total_data_received'] >= 1024 else f"{metrics['network']['total_data_received']} kb"))
-        # self.network_table.setItem(4, 1, QTableWidgetItem(f"{metrics['network']['packets_sent']}"))
-        # self.network_table.setItem(5, 1, QTableWidgetItem(f"{metrics['network']['packets_received']}"))
-        # self.network_table.setItem(6, 1, QTableWidgetItem(f"{metrics['network']['errors_sent']}"))
-        # self.network_table.setItem(7, 1, QTableWidgetItem(f"{metrics['network']['errors_received']}"))
 
         if self.data_points > self.max_data_points:
             self.cpu_series.remove(0)

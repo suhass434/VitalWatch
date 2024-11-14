@@ -26,7 +26,7 @@ STYLE_SHEET = {
         "grid_color": "#DDDDDD",
         "chart_grid": "#CCCCCC",
         "line": "#FF6B6B",
-        "border_color": "#333333",
+        "border_color": "#737373",
         "axis_color": "#000000",
         "axis_labels": "#666666",
         "grid_lines": "#CCCCCC",
