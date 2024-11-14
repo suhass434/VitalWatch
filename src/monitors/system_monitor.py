@@ -48,9 +48,6 @@ class SystemMonitor:
         }
 
     def get_disk_metrics(self):
-        """
-        Collect disk metrics.
-        """
         total = 0
         used = 0
         free = 0
@@ -62,6 +59,16 @@ class SystemMonitor:
         read_time = 0
         write_time = 0
         num_partitions = 0
+
+        # Get total disk usage for the whole disk (root partition)
+        try:
+            total_usage = psutil.disk_usage('/')
+            total = total_usage.total
+            free = total_usage.free
+            used = total_usage.used
+            percent = total_usage.percent
+        except Exception as e:
+            print(f"Error getting total disk usage: {e}")
 
         for partition in psutil.disk_partitions():
             try:
@@ -79,18 +86,20 @@ class SystemMonitor:
             except (KeyError, PermissionError):
                 continue
 
-        return {
+        disk_metrics = {
             'total': total,
             'used': used,
             'free': free,
             'percent': percent,
-           'read_count': read_count,
+            'read_count': read_count,
             'write_count': write_count,
-           'read_bytes': read_bytes,
+            'read_bytes': read_bytes,
             'write_bytes': write_bytes,
-           'read_time': read_time,
+            'read_time': read_time,
             'write_time': write_time
         }
+
+        return disk_metrics
 
     def get_network_metrics(self, interval=1):
         """
