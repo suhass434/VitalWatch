@@ -642,7 +642,7 @@ class MainWindow(QMainWindow):
         self.memory_series.append(self.data_points, metrics['memory']['percent'])
         self.disk_series.append(self.data_points, metrics['disk']['percent'])
         self.network_series.append(self.data_points, metrics['network']['upload_speed'])
-        self.cpu_temp_series.append(self.data_points, metrics['cpu_load']['cpu_temp'])
+        self.cpu_temp_series.append(self.data_points, metrics['cpu']['cpu_temp'])
 
         # Update cpu tab
         self.cpu_table.setItem(0, 1, QTableWidgetItem(f"{metrics['cpu']['cpu_percent']}%"))

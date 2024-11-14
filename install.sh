@@ -23,10 +23,10 @@
 
 
 # Check if the current shell is fish
-if [ "$SHELL" != "/usr/bin/bash" ] || [ "$SHELL" != "/bin/bash" ]; then
-    echo "Switching to bash to avoid fish shell issues..."
-    exec bash "$0"  # Restart this script in bash
-fi
+# if [ "$SHELL" != "/usr/bin/bash" ] || [ "$SHELL" != "/bin/bash" ]; then
+#     echo "Switching to bash to avoid fish shell issues..."
+#     exec bash "$0"  # Restart this script in bash
+# fi
 
 python -m venv env
 source env/bin/activate

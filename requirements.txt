@@ -1,9 +1,4 @@
 PyQt5
 PyQtChart
 PyYAML
-requests
 psutil
-SQLAlchemy
-# gputil
-# setuptools
-# nvidia-ml-py3
