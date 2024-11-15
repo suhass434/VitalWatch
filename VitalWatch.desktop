@@ -1,9 +1,9 @@
 #!/usr/bin/env xdg-open
 [Desktop Entry]
-Name = AutoGuard
-Comment = Monitor system health and performance
-Exec = ./env/bin/activate.fish ./run.py
-Icon = ./app/icons/icon.jpeg
-Terminal = false
-Type = Application
-Categories = System;Monitor;
+Name=VitalWatch
+Comment=Monitor system health and performance
+Exec=/home/$USER/vitalwatch/env/bin/python /home/$USER/vitalwatch/run.py
+Icon=/home/$USER/vitalwatch/app/icons/icon.png
+Terminal=false
+Type=Application
+Categories=System;Monitor;

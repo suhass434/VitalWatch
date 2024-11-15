@@ -24,7 +24,7 @@ def load_config():
     with open(config_path, 'r') as file:
         return yaml.safe_load(file)
 
-def monitoring_task(main_window, config):
+def monitoring_task(main_window, config, stopping_event):
     """
     Background task to monitor system metrics and update the GUI.
 
@@ -34,7 +34,7 @@ def monitoring_task(main_window, config):
     """
     system_monitor = SystemMonitor()
 
-    while True:
+    while not stopping_event.is_set():
         try:
             metrics = system_monitor.collect_metrics()
             main_window.update_metrics(metrics)
@@ -44,7 +44,7 @@ def monitoring_task(main_window, config):
             print(f"Error in system monitoring: {e}")
             time.sleep(config['monitoring']['interval'])
 
-def process_monitoring_task(main_window, config):
+def process_monitoring_task(main_window, config, stopping_event):
     """
     Background task to monitor processes and update the GUI's process table.
 
@@ -54,7 +54,7 @@ def process_monitoring_task(main_window, config):
     """
     process_monitor = ProcessMonitor()
 
-    while True:
+    while not stopping_event.is_set():
         try:
             processes = process_monitor.monitor_processes()
             main_window.update_process_table(processes)
@@ -73,7 +73,7 @@ def main():
     
     # Initialize Qt application
     app = QApplication(sys.argv)
-    icon_path = os.path.join(os.path.dirname(__file__), 'app/icons/icon.jpeg')
+    icon_path = os.path.join(os.path.dirname(__file__), 'app/icons/icon.png')
     app.setWindowIcon(QIcon(icon_path))
     
     # Setup main window and system tray icon
@@ -82,8 +82,8 @@ def main():
     tray = SystemMonitorTray(main_window)
     
     # Start monitoring tasks in separate threads
-    monitoring_thread = Thread(target=monitoring_task, args=(main_window, config), daemon=True)
-    process_thread = Thread(target=process_monitoring_task, args=(main_window, config), daemon=True)
+    monitoring_thread = Thread(target=monitoring_task, args=(main_window, config, tray.stopping), daemon=True)
+    process_thread = Thread(target=process_monitoring_task, args=(main_window, config, tray.stopping), daemon=True)
     
     monitoring_thread.start()
     process_thread.start()

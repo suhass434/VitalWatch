@@ -1,16 +1,19 @@
-from PyQt5.QtWidgets import QSystemTrayIcon, QMenu, QAction
+from PyQt5.QtWidgets import QSystemTrayIcon, QMenu, QAction, QApplication
 from PyQt5.QtGui import QIcon
 from PyQt5.QtCore import Qt, QTimer
 import os
+from threading import Event
 
 class SystemMonitorTray(QSystemTrayIcon):
     def __init__(self, parent=None):
         super().__init__(parent)
+        self.parent_window = parent
+        self.stopping = Event()
         self.setup_tray()
         
     def setup_tray(self):
         # Set icon
-        icon_path = os.path.join(os.path.dirname(__file__), '../icons/icon.jpeg')
+        icon_path = os.path.join(os.path.dirname(__file__), '../icons/icon.png')
         self.setIcon(QIcon(icon_path))
         
         # Create menu
@@ -20,10 +23,6 @@ class SystemMonitorTray(QSystemTrayIcon):
         show_action = QAction("Show Dashboard", self)
         show_action.triggered.connect(self.show_dashboard)
         menu.addAction(show_action)
-        
-        settings_action = QAction("Settings", self)
-        settings_action.triggered.connect(self.show_settings)
-        menu.addAction(settings_action)
         
         menu.addSeparator()
         
@@ -35,21 +34,23 @@ class SystemMonitorTray(QSystemTrayIcon):
         self.setToolTip('System Monitor')
         self.show()
         
-    def show_dashboard(self):
-        if hasattr(self, 'parent') and self.parent:
-            self.parent().show()
-            
-    def show_settings(self):
-        # Implement settings dialog
-        pass
+        # Connect the tray icon click signal to show the dashboard
+        self.activated.connect(self.on_tray_icon_activated)
         
+    def on_tray_icon_activated(self, reason):
+        if reason == QSystemTrayIcon.Trigger:
+            self.show_dashboard()
+            
+    def show_dashboard(self):
+        if self.parent_window:
+            self.parent_window.show()
+            self.parent_window.raise_()
+            self.parent_window.activateWindow()
+    
     def exit_app(self):
-        # Cleanup and exit
+        self.stopping.set()
         QApplication.quit()
         
-    def update_tooltip(self, metrics):
-        tooltip = (f"CPU: {metrics['cpu']}%\n"
-                  f"Memory: {metrics['memory']}%\n"
-                  f"Disk: {metrics['disk']}%")
-        self.setToolTip(tooltip)
-    
+    def closeEvent(self, event):
+        event.ignore()
+        self.parent_window.hide()
