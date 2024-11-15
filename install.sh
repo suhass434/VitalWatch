@@ -65,7 +65,3 @@ echo "✓ Installation completed successfully!"
 echo "╔════════════════════════════════════════╗"
 echo "║       VitalWatch is monitoring you!    ║"
 echo "╚════════════════════════════════════════╝"
-
-echo "✓ Starting VitalWatch..."
-sleep 3
-python ~/.vitalwatch/run.py
