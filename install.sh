@@ -65,3 +65,16 @@ echo "✓ Installation completed successfully!"
 echo "╔════════════════════════════════════════╗"
 echo "║       VitalWatch is monitoring you!    ║"
 echo "╚════════════════════════════════════════╝"
+
+# Instructions for running the app
+echo "VitalWatch has been successfully installed."
+echo "You can now use the application from the application menu, which was added during installation."
+echo "Just search for 'VitalWatch' in your application menu and click to launch it."
+echo ""
+# Fallback instructions if application menu fails
+echo "If for some reason the application menu doesn't work, you can use the following steps to run VitalWatch manually:"
+echo "1. Open a terminal window."
+echo "2. Activate the virtual environment by running:"
+echo "   source ~/.vitalwatch/env/bin/activate"
+echo "3. Run the application by executing:"
+echo "   python ~/.vitalwatch/run.py"

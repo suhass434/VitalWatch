@@ -1,9 +1,9 @@
 #!/usr/bin/env xdg-open
 [Desktop Entry]
-Name=VitalWatch
-Comment=Monitor system health and performance
-Exec=/home/$USER/vitalwatch/env/bin/python /home/$USER/vitalwatch/run.py
-Icon=/home/$USER/vitalwatch/app/icons/icon.png
-Terminal=false
-Type=Application
-Categories=System;Monitor;
+Name = VitalWatch
+Comment = Keep your system healthy and under watch.
+Exec = /home/$USER/vitalwatch/env/bin/python /home/$USER/vitalwatch/run.py
+Icon = /home/$USER/vitalwatch/app/icons/icon.png
+Terminal = false
+Type =Application
+Categories = System;Monitor;
