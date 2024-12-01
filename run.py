@@ -33,34 +33,20 @@ def monitoring_task(main_window, config, stopping_event):
         config (dict): Configuration settings for monitoring.
     """
     system_monitor = SystemMonitor()
+    process_monitor = ProcessMonitor()
 
     while not stopping_event.is_set():
         try:
             metrics = system_monitor.collect_metrics()
             main_window.update_metrics(metrics)
             time.sleep(config['monitoring']['interval'])
+            processes = process_monitor.monitor_processes()
+            main_window.update_process_table(processes)
+            time.sleep(config['monitoring']['interval'])
 
         except Exception as e:
             print(f"Error in system monitoring: {e}")
             time.sleep(config['monitoring']['interval'])
-
-def process_monitoring_task(main_window, config, stopping_event):
-    """
-    Background task to monitor processes and update the GUI's process table.
-
-    Args:
-        main_window (MainWindow): Reference to the main GUI window for updating process information.
-        config (dict): Configuration settings for process monitoring.
-    """
-    process_monitor = ProcessMonitor()
-
-    while not stopping_event.is_set():
-        try:
-            processes = process_monitor.monitor_processes()
-            main_window.update_process_table(processes)
-            time.sleep(config['monitoring']['interval'])
-        
-        except Exception as e:
             print(f"Error in process monitoring: {e}")
             time.sleep(config['monitoring']['interval'])
 
@@ -83,10 +69,10 @@ def main():
     
     # Start monitoring tasks in separate threads
     monitoring_thread = Thread(target=monitoring_task, args=(main_window, config, tray.stopping), daemon=True)
-    process_thread = Thread(target=process_monitoring_task, args=(main_window, config, tray.stopping), daemon=True)
+    # process_thread = Thread(target=process_monitoring_task, args=(main_window, config, tray.stopping), daemon=True)
     
     monitoring_thread.start()
-    process_thread.start()
+    # process_thread.start()
 
     # Run the Qt application event loop and handle application exit
     exit_code = app.exec_()

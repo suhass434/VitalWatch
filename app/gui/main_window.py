@@ -8,6 +8,10 @@ from app.gui.styleSheet import STYLE_SHEET
 import yaml
 import sys
 
+#windows
+# from PyQt5.QtCore import QMetaType
+# QMetaType.registerType('QVector<int>')
+
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()  
@@ -22,7 +26,7 @@ class MainWindow(QMainWindow):
 
         #overview label initialization
         self.cpu_percent = QLabel("Cpu Usage: --")
-        self.cpu_temp_label = QLabel("--")
+        #self.cpu_temp_label = QLabel("--")
         self.current_processes = []
         self.memory_label = QLabel("Memory Usage: --")
         self.disk_label = QLabel("Disk Usage: --")
@@ -33,7 +37,7 @@ class MainWindow(QMainWindow):
         self.memory_series = QLineSeries()
         self.disk_series = QLineSeries()
         self.network_series = QLineSeries()
-        self.cpu_temp_series = QLineSeries()
+        #self.cpu_temp_series = QLineSeries()
         self.data_points = 0
         self.max_data_points = 50
 
@@ -42,7 +46,7 @@ class MainWindow(QMainWindow):
         self.memory_chart = QChart()
         self.disk_chart = QChart()
         self.network_chart = QChart()
-        self.cpu_temp_chart = QChart()
+        #self.cpu_temp_chart = QChart()
         
         self.setup_ui()  
 
@@ -159,7 +163,7 @@ class MainWindow(QMainWindow):
         # Tables styling
         tables = [
             self.process_table, self.cpu_table, self.memory_table, 
-            self.disk_table, self.network_table
+            self.disk_table, self.network_table, self.battery_table
         ]
         
         table_style = f"""
@@ -372,7 +376,7 @@ class MainWindow(QMainWindow):
         colors = STYLE_SHEET["dark"]
         self.max_count = config['monitoring']['process']['max_count']
 
-        self.setWindowTitle("AutoGuard")
+        self.setWindowTitle("VitalWatch")
         self.setMinimumSize(820, 600)
         
         # Create central widget and layout
@@ -442,18 +446,8 @@ class MainWindow(QMainWindow):
         cpu_widget = QWidget()
         cpu_layout = QVBoxLayout(cpu_widget)  
         self.cpu_table = QTableWidget()
-        self.cpu_table.setRowCount(10)
-        self.cpu_table.setColumnCount(2)
-        self.cpu_table.setHorizontalHeaderLabels(["Metric", "Value"])  
-
-        cpu_header = self.cpu_table.horizontalHeader()
-        for i in range(self.cpu_table.columnCount()):
-            cpu_header.setSectionResizeMode(i, QHeaderView.Stretch)
-        
-        # Populate the table with CPU details
         cpu_metrics = [
             ("CPU Usage", "--"),
-            ("CPU Temperature", "--"),
             ("CPU Frequency", "--"),
             ("Logical Core Count", "--"),
             ("Physical Core Count", "--"),
@@ -464,7 +458,15 @@ class MainWindow(QMainWindow):
             ("User Time", "--"),
             ("System Time", "--"),
             ("Idle Time", "--"),
+            ("CPU Temperature", "--"),
         ]
+        self.cpu_table.setRowCount(len(cpu_metrics))
+        self.cpu_table.setColumnCount(2)
+        self.cpu_table.setHorizontalHeaderLabels(["Metric", "Value"])  
+
+        cpu_header = self.cpu_table.horizontalHeader()
+        for i in range(self.cpu_table.columnCount()):
+            cpu_header.setSectionResizeMode(i, QHeaderView.Stretch)
 
         for row, (metric_name, metric_value) in enumerate(cpu_metrics):
             self.cpu_table.setItem(row, 0, QTableWidgetItem(metric_name))
@@ -506,21 +508,11 @@ class MainWindow(QMainWindow):
         self.memory_table.verticalHeader().setVisible(False)
         self.memory_table.horizontalHeader().setStretchLastSection(True)
         memory_layout.addWidget(self.memory_table)
-        #tabs.addTab(memory_widget, "Memory Details")
 
         # Disk tab setup
         disk_widget = QWidget()
         disk_layout = QVBoxLayout(disk_widget)
         self.disk_table = QTableWidget()
-        self.disk_table.setRowCount(10)  # Adjust rows as needed based on metrics
-        self.disk_table.setColumnCount(2)
-        self.disk_table.setHorizontalHeaderLabels(["Metric", "Value"])
-
-        disk_header = self.disk_table.horizontalHeader()
-        for i in range(self.disk_table.columnCount()):
-            disk_header.setSectionResizeMode(i, QHeaderView.Stretch)
-
-        # Populate the table with disk metrics
         disk_metrics = [
             ("Total Disk Space", "--"),
             ("Used Disk Space", "--"),
@@ -533,6 +525,13 @@ class MainWindow(QMainWindow):
             ("Read Time", "--"),
             ("Write Time", "--"),
         ]
+        self.disk_table.setRowCount(len(disk_metrics))
+        self.disk_table.setColumnCount(2)
+        self.disk_table.setHorizontalHeaderLabels(["Metric", "Value"])
+
+        disk_header = self.disk_table.horizontalHeader()
+        for i in range(self.disk_table.columnCount()):
+            disk_header.setSectionResizeMode(i, QHeaderView.Stretch)
 
         for row, (metric_name, metric_value) in enumerate(disk_metrics):
             self.disk_table.setItem(row, 0, QTableWidgetItem(metric_name))
@@ -541,7 +540,31 @@ class MainWindow(QMainWindow):
         self.disk_table.verticalHeader().setVisible(False)
         self.disk_table.horizontalHeader().setStretchLastSection(True)
         disk_layout.addWidget(self.disk_table)
-        #tabs.addTab(disk_widget, "Disk Details")
+
+        #Battery details tab
+        battery_widget = QWidget()
+        battery_layout = QVBoxLayout(battery_widget)
+        self.battery_table = QTableWidget()
+        self.battery_table.setRowCount(3)
+        self.battery_table.setColumnCount(2)
+        self.battery_table.setHorizontalHeaderLabels(["Metric", "Value"])        
+
+        battery_header = self.battery_table.horizontalHeader()
+        for i in range(self.battery_table.columnCount()):
+            battery_header.setSectionResizeMode(i, QHeaderView.Stretch)
+
+        battery_metrics = [
+            ("Battery Percentage", "--"),
+            ("Status", "--"),
+            ("Total Data Sent", "--"),
+        ]        
+        for row, (metric_name, metric_value) in enumerate(battery_metrics):
+            self.battery_table.setItem(row, 0, QTableWidgetItem(metric_name))
+            self.battery_table.setItem(row, 1, QTableWidgetItem(str(metric_value)))
+
+        self.battery_table.verticalHeader().setVisible(False)
+        self.battery_table.horizontalHeader().setStretchLastSection(True)
+        battery_layout.addWidget(self.battery_table)
 
         #Network details tab
         network_widget = QWidget()
@@ -611,6 +634,7 @@ class MainWindow(QMainWindow):
         self.memory_table.setEditTriggers(QTableWidget.NoEditTriggers)
         self.disk_table.setEditTriggers(QTableWidget.NoEditTriggers)
         self.network_table.setEditTriggers(QTableWidget.NoEditTriggers)
+        self.battery_table.setEditTriggers(QTableWidget.NoEditTriggers)
         
         # add all tabs and load set_dark_mode by default
         self.set_dark_mode()
@@ -618,6 +642,7 @@ class MainWindow(QMainWindow):
         tabs.addTab(cpu_widget, "CPU Details")
         tabs.addTab(memory_widget, "Memory Details")
         tabs.addTab(disk_widget, "Disk Details")
+        tabs.addTab(battery_widget, "Battery Details")
         tabs.addTab(network_widget, "Network Details")    
         tabs.addTab(processes_widget, "Processes")
         tabs.addTab(self.settings_widget, "Settings")
@@ -635,28 +660,26 @@ class MainWindow(QMainWindow):
         self.disk_label.setText(f"Disk Usage: {metrics['disk']['percent']}%")
         self.network_label.setText(f"Network Usage: {metrics['network']['upload_speed']}kbps")
         self.cpu_percent.setText(f"CPU Usage: {metrics['cpu']['cpu_percent']}%")
-        self.cpu_temp_label.setText(f"CPU Temperature: {metrics['cpu']['cpu_temp']}\u00B0C")
-
+        
         # Update graph data
         self.cpu_series.append(self.data_points, metrics['cpu']['cpu_percent'])
         self.memory_series.append(self.data_points, metrics['memory']['percent'])
         self.disk_series.append(self.data_points, metrics['disk']['percent'])
-        self.network_series.append(self.data_points, metrics['network']['upload_speed'])
-        self.cpu_temp_series.append(self.data_points, metrics['cpu']['cpu_temp'])
-
-        # Update cpu tab
+        self.network_series.append(self.data_points, metrics['network']['upload_speed'])    
+        
+        # Update CPU tab
         self.cpu_table.setItem(0, 1, QTableWidgetItem(f"{metrics['cpu']['cpu_percent']}%"))
-        self.cpu_table.setItem(1, 1, QTableWidgetItem(f"{metrics['cpu']['cpu_temp']}\u00B0C"))
-        self.cpu_table.setItem(2, 1, QTableWidgetItem(f"{metrics['cpu']['cpu_freq']} MHz"))
-        self.cpu_table.setItem(3, 1, QTableWidgetItem(f"{metrics['cpu']['cpu_count_logical']}"))
-        self.cpu_table.setItem(4, 1, QTableWidgetItem(f"{metrics['cpu']['cpu_count_physical']}"))
-        self.cpu_table.setItem(5, 1, QTableWidgetItem(f"{metrics['cpu']['cpu_load_avg_1min']}"))
-        self.cpu_table.setItem(6, 1, QTableWidgetItem(f"{metrics['cpu']['cpu_context_switches']}"))
-        self.cpu_table.setItem(7, 1, QTableWidgetItem(f"{metrics['cpu']['cpu_interrupts']}"))
-        self.cpu_table.setItem(8, 1, QTableWidgetItem(f"{metrics['cpu']['cpu_syscalls']}"))
-        self.cpu_table.setItem(9, 1, QTableWidgetItem(f"{metrics['cpu']['cpu_user_time']}s"))
-        self.cpu_table.setItem(10, 1, QTableWidgetItem(f"{metrics['cpu']['cpu_system_time']}s"))
-        self.cpu_table.setItem(11, 1, QTableWidgetItem(f"{metrics['cpu']['cpu_idle_time']}s"))
+        self.cpu_table.setItem(1, 1, QTableWidgetItem(f"{metrics['cpu']['cpu_freq']} MHz"))
+        self.cpu_table.setItem(2, 1, QTableWidgetItem(f"{metrics['cpu']['cpu_count_logical']}"))
+        self.cpu_table.setItem(3, 1, QTableWidgetItem(f"{metrics['cpu']['cpu_count_physical']}"))
+        self.cpu_table.setItem(4, 1, QTableWidgetItem(f"{metrics['cpu']['cpu_load_avg_1min']}"))
+        self.cpu_table.setItem(5, 1, QTableWidgetItem(f"{metrics['cpu']['cpu_context_switches']}"))
+        self.cpu_table.setItem(6, 1, QTableWidgetItem(f"{metrics['cpu']['cpu_interrupts']}"))
+        self.cpu_table.setItem(7, 1, QTableWidgetItem(f"{metrics['cpu']['cpu_syscalls']}"))
+        self.cpu_table.setItem(8, 1, QTableWidgetItem(f"{metrics['cpu']['cpu_user_time']}s"))
+        self.cpu_table.setItem(9, 1, QTableWidgetItem(f"{metrics['cpu']['cpu_system_time']}s"))
+        self.cpu_table.setItem(10, 1, QTableWidgetItem(f"{metrics['cpu']['cpu_idle_time']}s"))
+        self.cpu_table.setItem(11, 1, QTableWidgetItem(f"{metrics['cpu']['cpu_temp']}\u00B0C"))
 
         # Update memory tab
         self.memory_table.setItem(0, 1, QTableWidgetItem(f"{metrics['memory']['total'] / (1024**2)/ 1024:.2f} GB" if metrics['memory']['total'] / (1024**2) > 1024 else f"{metrics['memory']['total'] / (1024**2):.2f} MB"))
@@ -686,12 +709,16 @@ class MainWindow(QMainWindow):
         self.network_table.setItem(2, 1, QTableWidgetItem(f"{metrics['network']['total_data_sent'] / (1024**2):.2f} GB" if metrics['network']['total_data_sent'] >= 1024**2 else f"{metrics['network']['total_data_sent'] / 1024:.2f} MB" if metrics['network']['total_data_sent'] >= 1024 else f"{metrics['network']['total_data_sent']} kb"))
         self.network_table.setItem(3, 1, QTableWidgetItem(f"{metrics['network']['total_data_received'] / (1024**2):.2f} GB" if metrics['network']['total_data_received'] >= 1024**2 else f"{metrics['network']['total_data_received'] / 1024:.2f} MB" if metrics['network']['total_data_received'] >= 1024 else f"{metrics['network']['total_data_received']} kb"))
 
+        #update battery tab
+        self.battery_table.setItem(0, 1, QTableWidgetItem(f"{metrics['battery']['battery_percentage']}%"))
+        self.battery_table.setItem(1, 1, QTableWidgetItem(f"{metrics['battery']['status']}"))
+        self.battery_table.setItem(2, 1, QTableWidgetItem(f"{metrics['battery']['time_remaining']}"))
+
         if self.data_points > self.max_data_points:
             self.cpu_series.remove(0)
             self.memory_series.remove(0)
             self.disk_series.remove(0)
             self.network_series.remove(0)
-            self.cpu_temp_series.remove(0)
             
             for chart in [self.cpu_chart, self.memory_chart, self.disk_chart, self.network_chart]:
                 chart.axes(Qt.Horizontal)[0].setRange(self.data_points - self.max_data_points, self.data_points)
@@ -706,27 +733,22 @@ class MainWindow(QMainWindow):
 
     def update_process_table(self, processes):
         if not self.isVisible():
-            return        
+            return
+
         self.current_processes = processes
-
         self.process_table.setUpdatesEnabled(False)
-        sorted_processes = sorted(processes, key=lambda x: float(x['cpu_percent']), reverse=True)
-        if self.show_all_processes:
 
-            display_processes = sorted_processes[:100]
-        else:
-            display_processes = [p for p in sorted_processes if float(p['cpu_percent']) > 0]
-        self.process_table.setUpdatesEnabled(True)   
-
-        # Update table        
+        display_processes = processes if self.show_all_processes else [p for p in processes if p['cpu_percent'] > 0]
         self.process_table.setRowCount(len(display_processes))
+
         for row, process in enumerate(display_processes):
             self.process_table.setItem(row, 0, QTableWidgetItem(process['name']))
             self.process_table.setItem(row, 1, QTableWidgetItem(f"{process['status']}"))
             self.process_table.setItem(row, 2, QTableWidgetItem(f"{process['cpu_percent']:.1f}"))
-            self.process_table.setItem(row, 3, QTableWidgetItem(f"{process['memory_percent']:.1f}"))        
+            self.process_table.setItem(row, 3, QTableWidgetItem(f"{process['memory_percent']:.1f}"))
             self.process_table.setItem(row, 4, QTableWidgetItem(f"{process['create_time']}"))
 
+        self.process_table.setUpdatesEnabled(True)
 
     def closeEvent(self, event):
         if self.background_checkbox.isChecked():

@@ -1,6 +1,7 @@
 import psutil
 import time
 from datetime import datetime
+import platform
 
 class SystemMonitor:
     def __init__(self):
@@ -8,16 +9,18 @@ class SystemMonitor:
         Initialize the SystemMonitor class.
         """
         self.matrix = {}
+        self.is_windows = platform.system().lower() == 'windows'
 
     def get_cpu_metrics(self):
         """
         Collect CPU metrics.
         """
-        temps = psutil.sensors_temperatures()
-        cpu_temp = temps['coretemp'][0].current if 'coretemp' in temps else None
+        temps = None if self.is_windows else psutil.sensors_temperatures()  # Only fetch temps on Windows
+        cpu_temp = temps['coretemp'][0].current if temps and 'coretemp' in temps else None
+
         return {
             'cpu_percent': psutil.cpu_percent(interval=1),
-            'cpu_temp': cpu_temp,
+            'cpu_temp': "--" if self.is_windows else cpu_temp,  # Include temp only for Windows
             'cpu_freq': int(psutil.cpu_freq().current) if psutil.cpu_freq() else None,
             'cpu_count_logical': psutil.cpu_count(logical=True),
             'cpu_count_physical': psutil.cpu_count(logical=False),
@@ -118,7 +121,25 @@ class SystemMonitor:
             'total_data_sent': net_after.bytes_sent,
             'total_data_received': net_after.bytes_recv
         }
+    
+    def get_battery_metrics(self):
+        battery = psutil.sensors_battery()
+        if not battery:
+            return "Battery information is not available on this system."
 
+        percent = battery.percent
+        charging = battery.power_plugged
+        time_left = battery.secsleft if battery.secsleft != psutil.POWER_TIME_UNLIMITED else None
+
+        status = "Charging" if charging else "Discharging"
+        time_remaining = f"{time_left // 3600}h {time_left % 3600 // 60}m" if (time_left and int(time_left) < 100000) else "N/A"
+
+        return {
+            "battery_percentage": f"{percent:.2f}",
+            "status": status,
+            "time_remaining": time_remaining,
+        }
+    
     def collect_metrics(self):
         """
         Collect all system metrics.
@@ -128,6 +149,15 @@ class SystemMonitor:
             'cpu': self.get_cpu_metrics(),
            'memory': self.get_memory_metrics(),
             'disk': self.get_disk_metrics(),
-            'network': self.get_network_metrics()
+            'network': self.get_network_metrics(),
+            'battery': self.get_battery_metrics()
         }
         return self.metrics
+    
+
+        
+if __name__ == '__main__':
+    s = SystemMonitor()
+    metrics = s.collect_metrics()
+    
+    print(metrics)

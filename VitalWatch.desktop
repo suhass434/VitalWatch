@@ -5,5 +5,5 @@ Comment = Keep your system healthy and under watch.
 Exec = /home/$USER/vitalwatch/env/bin/python /home/$USER/vitalwatch/run.py
 Icon = /home/$USER/vitalwatch/app/icons/icon.png
 Terminal = false
-Type =Application
+Type = Application
 Categories = System;Monitor;
