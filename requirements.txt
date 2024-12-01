@@ -2,3 +2,5 @@ PyQt5
 PyQtChart
 PyYAML
 psutil
+scikit-learn
+pandas

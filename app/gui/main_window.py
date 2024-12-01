@@ -556,7 +556,7 @@ class MainWindow(QMainWindow):
         battery_metrics = [
             ("Battery Percentage", "--"),
             ("Status", "--"),
-            ("Total Data Sent", "--"),
+            ("Total Time Remaining", "--"),
         ]        
         for row, (metric_name, metric_value) in enumerate(battery_metrics):
             self.battery_table.setItem(row, 0, QTableWidgetItem(metric_name))

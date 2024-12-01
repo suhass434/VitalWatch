@@ -3,6 +3,7 @@ import sys
 import os
 import time
 import yaml
+import pandas as pd
 from threading import Thread
 from PyQt5.QtWidgets import QApplication
 from PyQt5.QtGui import QIcon
@@ -12,6 +13,10 @@ from app.gui.main_window import MainWindow
 from app.gui.system_tray import SystemMonitorTray
 from src.monitors.system_monitor import SystemMonitor
 from src.monitors.process_monitor import ProcessMonitor
+from src.database.db import preprocess_data
+
+MAX_CSV_ROWS = 1000
+OUTPUT_CSV = 'preprocess_data.csv'
 
 def load_config():
     """
@@ -23,6 +28,41 @@ def load_config():
     config_path = 'config/config.yaml'
     with open(config_path, 'r') as file:
         return yaml.safe_load(file)
+def manage_csv_size(output_file, max_rows):
+    """
+    Ensures the CSV file does not exceed the specified number of rows.
+
+    Args:
+        output_file (str): Path to the CSV file.
+        max_rows (int): Maximum number of rows allowed in the CSV file.
+    """
+    if os.path.exists(output_file):
+        df = pd.read_csv(output_file)
+        if len(df) > max_rows:
+            df = df.iloc[-max_rows:]  # Keep only the last `max_rows` rows
+            df.to_csv(output_file, index=False)
+
+def data_collection_task(config, stopping_event):
+    """
+    Periodically collect system metrics, preprocess data, and save it to a CSV file.
+
+    Args:
+        config (dict): Configuration settings.
+        stopping_event (threading.Event): Event to stop the thread.
+    """
+    system_monitor = SystemMonitor()
+    while not stopping_event.is_set():
+        try:
+            # Collect metrics
+            metrics = [system_monitor.collect_metrics()]
+            # Preprocess and append to CSV
+            preprocess_data(metrics, OUTPUT_CSV)
+            # Manage CSV size
+            manage_csv_size(OUTPUT_CSV, MAX_CSV_ROWS)
+            time.sleep(config['monitoring']['interval'])
+        except Exception as e:
+            print(f"Error in data collection: {e}")
+            time.sleep(config['monitoring']['interval'])
 
 def monitoring_task(main_window, config, stopping_event):
     """
@@ -69,10 +109,10 @@ def main():
     
     # Start monitoring tasks in separate threads
     monitoring_thread = Thread(target=monitoring_task, args=(main_window, config, tray.stopping), daemon=True)
-    # process_thread = Thread(target=process_monitoring_task, args=(main_window, config, tray.stopping), daemon=True)
-    
+    data_collection_thread = Thread(target=data_collection_task, args=(config, tray.stopping), daemon=True)
+
     monitoring_thread.start()
-    # process_thread.start()
+    data_collection_thread.start()
 
     # Run the Qt application event loop and handle application exit
     exit_code = app.exec_()
