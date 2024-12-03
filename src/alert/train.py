@@ -41,39 +41,42 @@ def train_model(data_file: str, model_file: str, contamination: float = 0.1, tes
     #logger.info("Splitting data into train and validation sets")
     X_train, X_val = train_test_split(X_Scaled, test_size=test_size, random_state=42)
     
-    # Initialize and train model
-    #logger.info("Training Isolation Forest model")
+    # Add more variability to the training data
+    noise = np.random.normal(0, 0.005, X_Scaled.shape)
+    X_Scaled_with_noise = X_Scaled + noise
+
+    # Adjust model parameters for better handling of homogeneous data
     model = IsolationForest(
         contamination=contamination,
         random_state=42,
-        n_jobs=-1
+        n_jobs=-1,
+        n_estimators=500,  # Increase number of trees
+        max_samples=min(256, len(X_Scaled)),
+        bootstrap=True
     )
-    model.fit(X_train)
+    model.fit(X_Scaled_with_noise)
     
-    # Generate predictions
-    #logger.info("Generating predictions")
+    # Adjust scoring threshold
     train_scores = model.score_samples(X_train)
     val_scores = model.score_samples(X_val)
     
-    # Calculate metrics
-    metrics = calculate_metrics(train_scores, val_scores)
-    #logger.info(f"Model metrics: {metrics}")
+    # Use dynamic thresholding
+    threshold = np.percentile(train_scores,0.1)
     
-    # Save model
-    #logger.info(f"Saving model to {model_file}")
+    metrics = calculate_metrics(train_scores, val_scores, threshold)
     joblib.dump(model, model_file)
-    
+
     return metrics
 
-def calculate_metrics(train_scores: np.ndarray, val_scores: np.ndarray) -> dict:
+def calculate_metrics(train_scores: np.ndarray, val_scores: np.ndarray, threshold: float) -> dict:
     """Calculate model evaluation metrics."""
     return {
         'train_mean_score': float(np.mean(train_scores)),
         'train_std_score': float(np.std(train_scores)),
         'val_mean_score': float(np.mean(val_scores)),
         'val_std_score': float(np.std(val_scores)),
-        'train_anomaly_ratio': float(np.mean(train_scores < 0)),
-        'val_anomaly_ratio': float(np.mean(val_scores < 0))
+        'train_anomaly_ratio': float(np.mean(train_scores < threshold)),
+        'val_anomaly_ratio': float(np.mean(val_scores < threshold))
     }
 
 if __name__ == "__main__":
