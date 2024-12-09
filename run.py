@@ -15,7 +15,6 @@ from src.monitors.system_monitor import SystemMonitor
 from src.monitors.process_monitor import ProcessMonitor
 from src.database.db import preprocess_data
 from src.alert.train import train_model
-from src.alert.detect_anomaly import detect_anomalies
 
 THRESHOLD_STEP = 100
 OUTPUT_CSV = 'preprocess_data.csv'

@@ -16,6 +16,7 @@ sleep 1
 
 # Step 2: Confirm uninstallation
 read -p "Are you sure you want to uninstall VitalWatch? (y/n): " confirmation
+confirmation=$(echo "$confirmation" | tr '[:upper:]' '[:lower:]')  # Normalize input to lowercase
 if [[ "$confirmation" != "y" ]]; then
     echo "No worries! Your VitalWatch setup is safe. See you next time!"
     exit 0
@@ -64,7 +65,7 @@ echo "No lingering configurations to worry about."
 
 # Step 7: Final Cleanup
 echo "[5/6] Performing a final sweep..."
-# Add any other cleanup tasks here
+# You can add more cleanup tasks here, e.g., removing logs, clearing cache
 echo "System is squeaky clean!"
 
 # Step 8: Farewell message
