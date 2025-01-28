@@ -15,12 +15,12 @@ class SystemMonitor:
         """
         Collect CPU metrics.
         """
-        temps = None if self.is_windows else psutil.sensors_temperatures()  # Only fetch temps on Windows
+        temps = None if self.is_windows else psutil.sensors_temperatures()  # Only fetch temps on linux
         cpu_temp = temps['coretemp'][0].current if temps and 'coretemp' in temps else None
 
         return {
             'cpu_percent': psutil.cpu_percent(interval=1),
-            'cpu_temp': "--" if self.is_windows else cpu_temp,  # Include temp only for Windows
+            'cpu_temp': "--" if self.is_windows else cpu_temp,
             'cpu_freq': int(psutil.cpu_freq().current) if psutil.cpu_freq() else None,
             'cpu_count_logical': psutil.cpu_count(logical=True),
             'cpu_count_physical': psutil.cpu_count(logical=False),

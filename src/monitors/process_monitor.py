@@ -32,7 +32,7 @@ class ProcessMonitor:
         """
         sleep_interval = self.config['monitoring']['process']['sleep']
 
-        # Use a generator with filtering
+        # generator with filtering
         process_info_gen = (
             self.get_process_info(proc)
             for proc in psutil.process_iter(

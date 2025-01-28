@@ -8,10 +8,6 @@ from app.gui.styleSheet import STYLE_SHEET
 import yaml
 import sys
 
-#windows
-# from PyQt5.QtCore import QMetaType
-# QMetaType.registerType('QVector<int>')
-
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()  
@@ -420,7 +416,7 @@ class MainWindow(QMainWindow):
         button_layout = QHBoxLayout(button_container)
         button_layout.setAlignment(Qt.AlignRight)  
         self.show_all_button = QPushButton("Show More")
-        self.show_all_button.setMaximumWidth(130)  # Set maximum width
+        self.show_all_button.setMaximumWidth(130)
         self.show_all_button.setFixedHeight(30)         
         self.show_all_button.clicked.connect(self.toggle_process_view)
         self.show_all_processes = False

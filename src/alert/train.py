@@ -83,7 +83,7 @@ if __name__ == "__main__":
     # Train the model
     metrics = train_model(
         data_file='preprocess_data.csv',
-        model_file='anomaly_model.pkl',
+        model_file='src/alert/anomaly_model.pkl',
         contamination=0.1,
         test_size=0.2
     )
