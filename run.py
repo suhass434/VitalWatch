@@ -15,9 +15,19 @@ from src.monitors.system_monitor import SystemMonitor
 from src.monitors.process_monitor import ProcessMonitor
 from src.database.db import preprocess_data
 from src.alert.train import train_model
+from src.alert.detect import detect_anomalies
 
 THRESHOLD_STEP = 100
-OUTPUT_CSV = 'preprocess_data.csv'
+
+# Define paths
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+ALERT_DIR = os.path.join(BASE_DIR, "src", "alert")
+OUTPUT_CSV = os.path.join(ALERT_DIR, 'preprocess_data.csv')
+MODEL_PATH = os.path.join(ALERT_DIR, 'anomaly_model.pkl')
+detect = False
+
+# Ensure alert directory exists
+os.makedirs(ALERT_DIR, exist_ok=True)
 
 def load_config():
     """
@@ -55,6 +65,7 @@ def data_collection_task(config, stopping_event):
     """
     system_monitor = SystemMonitor()
     next_training_threshold = THRESHOLD_STEP
+    global detect
     
     while not stopping_event.is_set():
         try:
@@ -64,20 +75,23 @@ def data_collection_task(config, stopping_event):
             preprocess_data(metrics, OUTPUT_CSV)
             # Manage CSV size
             row_count = manage_csv_size(OUTPUT_CSV, THRESHOLD_STEP)
-        
-            ANOMALY_WARNING_THRESHOLD = 0.002
+
+            #ANOMALY_WARNING_THRESHOLD = 0.002
 
             # Check if threshold for training is reached
             if row_count >= next_training_threshold:
                 print("Triggering training...")
-                metrics = train_model(data_file=OUTPUT_CSV, model_file='anomaly_model.pkl', contamination=0.005, test_size=0.2)
+                metrics = train_model(data_file=OUTPUT_CSV, model_file=MODEL_PATH, contamination=0.005, test_size=0.2)
                 
-                # Issue warning if anomalies are detected
-                if metrics['train_anomaly_ratio'] > 0.5 or metrics['val_anomaly_ratio'] > 0 or metrics['val_anomaly_ratio'] > ANOMALY_WARNING_THRESHOLD:
-                    print(f"WARNING: Critical system anomalies detected!")
-                else:
-                    print("No critical system anomalies detected.")
-                # Update the next training threshold
+                if metrics:
+                    print("training complete")
+                    detect = True
+                # # Issue warning if anomalies are detected
+                # if metrics['train_anomaly_ratio'] > 0.5 or metrics['val_anomaly_ratio'] > 0 or metrics['val_anomaly_ratio'] > ANOMALY_WARNING_THRESHOLD:
+                #     print(f"WARNING: Critical system anomalies detected!")
+                # else:
+                #     print("No critical system anomalies detected.")
+                # # Update the next training threshold
                 next_training_threshold += THRESHOLD_STEP
 
             # Wait for the next monitoring interval
@@ -121,12 +135,17 @@ def anomaly_detection_task(config, stopping_event):
         stopping_event (threading.Event): Event to stop the thread.
     """
     while not stopping_event.is_set():
+        if not detect:
+            continue
         try:
             # Load preprocessed data for anomaly detection
             if os.path.exists(OUTPUT_CSV):
-                anomalies = detect_anomalies(data_file=OUTPUT_CSV, model_file='anomaly_model.pkl')
-                if anomalies:
-                    print(f"Detected anomalies: {anomalies}")
+                anomalies = detect_anomalies(data_file=OUTPUT_CSV, model_file=MODEL_PATH)
+                if not anomalies.empty:
+                    print("Detected anomalies in the system")
+                    print(anomalies.to_string(index=False))
+                else:
+                    print("Regular check: No anomalies detected.")
             else:
                 print("No data available for anomaly detection.")
             
@@ -160,7 +179,7 @@ def main():
 
     monitoring_thread.start()
     data_collection_thread.start()
-    #anomaly_detection_thread.start()
+    anomaly_detection_thread.start()
 
     # Run the Qt application event loop and handle application exit
     exit_code = app.exec_()
