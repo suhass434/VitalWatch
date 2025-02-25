@@ -4,15 +4,27 @@ from PyQt5.QtChart import QChart, QChartView, QLineSeries, QValueAxis
 from PyQt5.QtCore import Qt
 from PyQt5.QtGui import QColor, QBrush, QPen, QFont, QPainter
 import threading
-from app.gui.styleSheet import STYLE_SHEET
+from src.gui.styleSheet import STYLE_SHEET
 import yaml
 import sys
 import pandas as pd
 import time
 
 from src.alert.detect import detect_anomalies
-THRESHOLD_STEP = 100
-OUTPUT_CSV = "src/alert/preprocess_data.csv"
+
+def load_config():
+    """
+    Load configuration settings from a YAML file.
+    
+    Returns:
+        dict: Parsed YAML configuration data.
+    """
+    config_path = 'config/config.yaml'
+    with open(config_path, 'r') as file:
+        return yaml.safe_load(file)
+    
+THRESHOLD_STEP = load_config()['monitoring']['anomaly_detection_interval']
+OUTPUT_CSV = "src/data/preprocess_data.csv"
 
 class MainWindow(QMainWindow):
     def __init__(self):

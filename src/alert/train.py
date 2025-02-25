@@ -5,7 +5,7 @@ from sklearn.preprocessing import MinMaxScaler
 import joblib
 
 # Load CSV file
-file_path = "src/alert/train_data.csv"
+file_path = "src/data/train_data.csv"
 df = pd.read_csv(file_path, header=None)
 
 # Remove timestamp column (assuming the first column is a timestamp)
@@ -20,6 +20,6 @@ model = IsolationForest(contamination=0.2, random_state=42)
 model.fit(X_scaled)
 
 # Save model and scaler
-joblib.dump(model, "src/alert/isolation_forest_model.pkl")
-joblib.dump(scaler, "src/alert/scaler.pkl")
+joblib.dump(model, "src/models/isolation_forest_model.pkl")
+joblib.dump(scaler, "src/models/scaler.pkl")
 print("Model and scaler saved successfully.")

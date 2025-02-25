@@ -2,8 +2,8 @@ import pandas as pd
 import joblib
 
 # Load the pre-trained Isolation Forest model and scaler
-model = joblib.load("src/alert/isolation_forest_model.pkl")
-scaler = joblib.load("src/alert/scaler.pkl")  # Load the same MinMaxScaler
+model = joblib.load("src/models/isolation_forest_model.pkl")
+scaler = joblib.load("src/models/scaler.pkl")  # Load the same MinMaxScaler
 
 def detect_anomalies(data_file: str, THRESHOLD_STEP: int) -> pd.DataFrame:
     """
@@ -31,7 +31,7 @@ def detect_anomalies(data_file: str, THRESHOLD_STEP: int) -> pd.DataFrame:
     anomalies = df[y_pred == -1]
 
     #print(f"Detected {len(anomalies)} anomalies")
-    if (len(anomalies) > THRESHOLD_STEP / 0.8):
+    if (len(anomalies) > THRESHOLD_STEP * 0.8):
         print("Anomaly detected")
         return anomalies
     else:
@@ -40,5 +40,5 @@ def detect_anomalies(data_file: str, THRESHOLD_STEP: int) -> pd.DataFrame:
         
 if __name__ == "__main__":
     # Example usage
-    anomalies = detect_anomalies("src/alert/train_data.csv", 100)
+    anomalies = detect_anomalies("src/data/train_data.csv", 100)
     print(anomalies)

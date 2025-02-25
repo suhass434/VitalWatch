@@ -7,24 +7,14 @@ import pandas as pd
 from threading import Thread
 from PyQt5.QtWidgets import QApplication
 from PyQt5.QtGui import QIcon
-
+import signal
 # Import internal modules for GUI and monitoring tasks
-from app.gui.main_window import MainWindow
-from app.gui.system_tray import SystemMonitorTray
+from src.gui.main_window import MainWindow
+from src.gui.system_tray import SystemMonitorTray
 from src.monitors.system_monitor import SystemMonitor
 from src.monitors.process_monitor import ProcessMonitor
 from src.database.db import preprocess_data
 from src.alert.detect import detect_anomalies
-
-THRESHOLD_STEP = 100
-
-# Define paths
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-ALERT_DIR = os.path.join(BASE_DIR, "src", "alert")
-OUTPUT_CSV = os.path.join(ALERT_DIR, 'preprocess_data.csv')
-
-# Ensure alert directory exists
-os.makedirs(ALERT_DIR, exist_ok=True)
 
 def load_config():
     """
@@ -36,6 +26,15 @@ def load_config():
     config_path = 'config/config.yaml'
     with open(config_path, 'r') as file:
         return yaml.safe_load(file)
+
+THRESHOLD_STEP = load_config()['monitoring']['anomaly_detection_interval']
+# Define paths
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+ALERT_DIR = os.path.join(BASE_DIR, "src", "data")
+OUTPUT_CSV = os.path.join(ALERT_DIR, 'preprocess_data.csv')
+
+# Ensure alert directory exists
+os.makedirs(ALERT_DIR, exist_ok=True)
 
 def manage_csv_size(output_file, max_rows):
     """
@@ -128,7 +127,7 @@ def main():
     
     # Initialize Qt application
     app = QApplication(sys.argv)
-    icon_path = os.path.join(os.path.dirname(__file__), 'app/icons/icon.png')
+    icon_path = os.path.join(os.path.dirname(__file__), 'src/icons/icon.png')
     app.setWindowIcon(QIcon(icon_path))
     
     # Setup main window and system tray icon
