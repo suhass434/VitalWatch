@@ -14,7 +14,6 @@ from app.gui.system_tray import SystemMonitorTray
 from src.monitors.system_monitor import SystemMonitor
 from src.monitors.process_monitor import ProcessMonitor
 from src.database.db import preprocess_data
-from src.alert.train import train_model
 from src.alert.detect import detect_anomalies
 
 THRESHOLD_STEP = 100
@@ -23,8 +22,6 @@ THRESHOLD_STEP = 100
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 ALERT_DIR = os.path.join(BASE_DIR, "src", "alert")
 OUTPUT_CSV = os.path.join(ALERT_DIR, 'preprocess_data.csv')
-MODEL_PATH = os.path.join(ALERT_DIR, 'anomaly_model.pkl')
-detect = False
 
 # Ensure alert directory exists
 os.makedirs(ALERT_DIR, exist_ok=True)
@@ -39,6 +36,7 @@ def load_config():
     config_path = 'config/config.yaml'
     with open(config_path, 'r') as file:
         return yaml.safe_load(file)
+
 def manage_csv_size(output_file, max_rows):
     """
     Ensures the CSV file does not exceed the specified number of rows.
@@ -56,48 +54,43 @@ def manage_csv_size(output_file, max_rows):
     return 0
 
 def data_collection_task(config, stopping_event):
-    """
-    Periodically collect system metrics, preprocess data, and save it to a CSV file.
-
-    Args:
-        config (dict): Configuration settings.
-        stopping_event (threading.Event): Event to stop the thread.
-    """
     system_monitor = SystemMonitor()
-    next_training_threshold = THRESHOLD_STEP
-    global detect
-    
+
     while not stopping_event.is_set():
         try:
             # Collect metrics
             metrics = [system_monitor.collect_metrics()]
-            # Preprocess and append to CSV
             preprocess_data(metrics, OUTPUT_CSV)
+
             # Manage CSV size
-            row_count = manage_csv_size(OUTPUT_CSV, THRESHOLD_STEP)
-
-            #ANOMALY_WARNING_THRESHOLD = 0.002
-
-            # Check if threshold for training is reached
-            if row_count >= next_training_threshold:
-                print("Triggering training...")
-                metrics = train_model(data_file=OUTPUT_CSV, model_file=MODEL_PATH, contamination=0.005, test_size=0.2)
-                
-                if metrics:
-                    print("training complete")
-                    detect = True
-                # # Issue warning if anomalies are detected
-                # if metrics['train_anomaly_ratio'] > 0.5 or metrics['val_anomaly_ratio'] > 0 or metrics['val_anomaly_ratio'] > ANOMALY_WARNING_THRESHOLD:
-                #     print(f"WARNING: Critical system anomalies detected!")
-                # else:
-                #     print("No critical system anomalies detected.")
-                # # Update the next training threshold
-                next_training_threshold += THRESHOLD_STEP
-
-            # Wait for the next monitoring interval
+            manage_csv_size(OUTPUT_CSV, THRESHOLD_STEP)  
+            
+            # Wait before collecting the next data point
             time.sleep(config['monitoring']['interval'])
+
         except Exception as e:
             print(f"Error in data collection task: {e}")
+            time.sleep(config['monitoring']['interval'])
+
+def anomaly_detection_task(config, stopping_event, main_window):
+    """Background task to detect anomalies and update the UI"""
+    iteration_count = 0
+
+    while not stopping_event.is_set():
+        try:
+            iteration_count += 1
+            
+            if iteration_count >= THRESHOLD_STEP:
+                print("It's time to run a system check and detect any anomalies!")
+                # Detect anomalies and update UI
+                anomalies = detect_anomalies(OUTPUT_CSV, THRESHOLD_STEP)
+                main_window.update_anomaly_table(anomalies)
+                iteration_count = 0  # Reset counter
+                
+            time.sleep(config['monitoring']['interval'])
+
+        except Exception as e:
+            print(f"Error in anomaly detection task: {e}")
             time.sleep(config['monitoring']['interval'])
 
 def monitoring_task(main_window, config, stopping_event):
@@ -126,35 +119,6 @@ def monitoring_task(main_window, config, stopping_event):
             print(f"Error in process monitoring: {e}")
             time.sleep(config['monitoring']['interval'])
 
-def anomaly_detection_task(config, stopping_event):
-    """
-    Periodically detect anomalies in the collected data.
-
-    Args:
-        config (dict): Configuration settings.
-        stopping_event (threading.Event): Event to stop the thread.
-    """
-    while not stopping_event.is_set():
-        if not detect:
-            continue
-        try:
-            # Load preprocessed data for anomaly detection
-            if os.path.exists(OUTPUT_CSV):
-                anomalies = detect_anomalies(data_file=OUTPUT_CSV, model_file=MODEL_PATH)
-                if not anomalies.empty:
-                    print("Detected anomalies in the system")
-                    print(anomalies.to_string(index=False))
-                else:
-                    print("Regular check: No anomalies detected.")
-            else:
-                print("No data available for anomaly detection.")
-            
-            # Wait for the next detection interval
-            time.sleep(config['monitoring']['anomaly_detection_interval'])
-        except Exception as e:
-            print(f"Error in anomaly detection task: {e}")
-            time.sleep(config['monitoring']['anomaly_detection_interval'])
-
 def main():
     """
     Main function to initialize and start the application.
@@ -175,7 +139,7 @@ def main():
     # Start monitoring tasks in separate threads
     monitoring_thread = Thread(target=monitoring_task, args=(main_window, config, tray.stopping), daemon=True)
     data_collection_thread = Thread(target=data_collection_task, args=(config, tray.stopping), daemon=True)
-    anomaly_detection_thread = Thread(target=anomaly_detection_task, args=(config, tray.stopping), daemon=True)
+    anomaly_detection_thread = Thread(target=anomaly_detection_task, args=(config, tray.stopping, main_window), daemon=True)
 
     monitoring_thread.start()
     data_collection_thread.start()

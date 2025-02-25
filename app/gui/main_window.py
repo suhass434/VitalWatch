@@ -7,6 +7,12 @@ import threading
 from app.gui.styleSheet import STYLE_SHEET
 import yaml
 import sys
+import pandas as pd
+import time
+
+from src.alert.detect import detect_anomalies
+THRESHOLD_STEP = 100
+OUTPUT_CSV = "src/alert/preprocess_data.csv"
 
 class MainWindow(QMainWindow):
     def __init__(self):
@@ -155,11 +161,13 @@ class MainWindow(QMainWindow):
             }}
         """
         self.show_all_button.setStyleSheet(button_style)
+        self.detect_button.setStyleSheet(button_style)
 
         # Tables styling
         tables = [
             self.process_table, self.cpu_table, self.memory_table, 
-            self.disk_table, self.network_table, self.battery_table
+            self.disk_table, self.network_table, self.battery_table,
+            self.anomaly_table
         ]
         
         table_style = f"""
@@ -273,6 +281,15 @@ class MainWindow(QMainWindow):
                 border: 1px solid {colors['border_color']};
             }}
         """
+
+        self.last_run_time.setStyleSheet(f"""
+            QLabel {{
+                font-size: 12px;
+                color: {colors['text_color']};
+                padding: 5px;
+            }}
+        """)
+
         self.settings_widget.setStyleSheet(settings_style)
         
         if hasattr(self, 'overview_tab'):
@@ -406,6 +423,61 @@ class MainWindow(QMainWindow):
         overview_layout.addWidget(self.network_label, 2, 1)
         overview_layout.addWidget(network_chart_view, 3, 1)       
         #tabs.addTab(overview_widget, "Overview")
+
+        # Anomaly Detection tab
+        anomaly_widget = QWidget()
+        anomaly_layout = QVBoxLayout(anomaly_widget)
+
+        # Add status label above
+        self.anomaly_status = QLabel("System Status: Not Checked")
+        self.anomaly_status.setAlignment(Qt.AlignCenter)
+        self.anomaly_status.setStyleSheet("""
+            QLabel {
+                font-size: 16px;
+                padding: 10px;
+                border-radius: 5px;
+                background-color: #7f8c8d;
+                color: white;
+            }
+        """)
+
+        # Add last run time label
+        self.last_run_time = QLabel("Last Run: Never")
+        self.last_run_time.setAlignment(Qt.AlignCenter)
+
+        # Create button to trigger detection
+        self.detect_button = QPushButton("Run Anomaly Detection")
+        self.detect_button.clicked.connect(self.on_detect_clicked)
+
+        # Create horizontal container for button and last run time
+        button_container = QWidget()
+        button_layout = QHBoxLayout(button_container)
+        button_layout.setAlignment(Qt.AlignCenter)
+
+        # Add widgets to horizontal layout with spacing
+        button_layout.addWidget(self.detect_button)
+        button_layout.addWidget(self.last_run_time)
+
+        # Set equal stretch for both widgets
+        button_layout.setStretchFactor(self.detect_button, 1)
+        button_layout.setStretchFactor(self.last_run_time, 1)
+
+        # Create table for results
+        self.anomaly_table = QTableWidget()
+        self.anomaly_table.setColumnCount(5)  # Adjust columns based on your metrics
+        self.anomaly_table.setHorizontalHeaderLabels(['CPU %', 'Memory %', 'Disk %', 'Network', 'Status'])
+        self.anomaly_table.setEditTriggers(QTableWidget.NoEditTriggers)
+        
+        # Style the table header
+        anomaly_header = self.anomaly_table.horizontalHeader()
+        for i in range(self.anomaly_table.columnCount()):
+            anomaly_header.setSectionResizeMode(i, QHeaderView.Stretch)
+        self.anomaly_table.verticalHeader().setVisible(False)
+
+        # Add widgets to layout
+        anomaly_layout.addWidget(self.anomaly_status)
+        anomaly_layout.addWidget(button_container)
+        anomaly_layout.addWidget(self.anomaly_table)
 
         # Processes tab
         processes_widget = QWidget()
@@ -638,8 +710,9 @@ class MainWindow(QMainWindow):
         tabs.addTab(cpu_widget, "CPU Details")
         tabs.addTab(memory_widget, "Memory Details")
         tabs.addTab(disk_widget, "Disk Details")
-        tabs.addTab(battery_widget, "Battery Details")
         tabs.addTab(network_widget, "Network Details")    
+        tabs.addTab(anomaly_widget, "Anomaly Detection")
+        tabs.addTab(battery_widget, "Battery Details")
         tabs.addTab(processes_widget, "Processes")
         tabs.addTab(self.settings_widget, "Settings")
 
@@ -745,6 +818,73 @@ class MainWindow(QMainWindow):
             self.process_table.setItem(row, 4, QTableWidgetItem(f"{process['create_time']}"))
 
         self.process_table.setUpdatesEnabled(True)
+
+    def on_detect_clicked(self):
+        """Trigger anomaly detection and update table."""
+        anomalies = detect_anomalies(OUTPUT_CSV, THRESHOLD_STEP)
+        self.update_anomaly_table(anomalies)
+
+    def update_anomaly_table(self, anomalies=None):
+        """Update the anomaly detection table with results"""
+        self.anomaly_table.setUpdatesEnabled(False)
+        
+        # Clear existing rows
+        self.anomaly_table.setRowCount(0)
+        
+        if anomalies is not None and not anomalies.empty:
+            # Update status label for anomaly
+            self.anomaly_status.setText("⚠️ Anomalies Detected!")
+            self.anomaly_status.setStyleSheet("""
+                QLabel {
+                    font-size: 16px;
+                    padding: 10px;
+                    border-radius: 5px;
+                    background-color: #e74c3c;
+                    color: white;
+                }
+            """)
+            
+            # Update last run time
+            current_time = time.strftime("%Y-%m-%d %H:%M:%S")
+            self.last_run_time.setText(f"Last Run: {current_time}")
+            
+            self.anomaly_table.setUpdatesEnabled(False)
+
+            # Add rows for detected anomalies
+            self.anomaly_table.setRowCount(len(anomalies))
+            
+            for row, anomaly in enumerate(anomalies.itertuples()):
+                # Fill table with anomaly data
+                self.anomaly_table.setItem(row, 0, QTableWidgetItem(f"{anomaly[1]:.2f}"))
+                self.anomaly_table.setItem(row, 1, QTableWidgetItem(f"{anomaly[2]:.2f}"))
+                self.anomaly_table.setItem(row, 2, QTableWidgetItem(f"{anomaly[3]:.2f}"))
+                self.anomaly_table.setItem(row, 3, QTableWidgetItem(f"{anomaly[4]:.2f}"))
+                self.anomaly_table.setItem(row, 4, QTableWidgetItem("⚠️ Anomaly"))
+                
+                # Set red color for anomaly rows
+                for col in range(self.anomaly_table.columnCount()):
+                    item = self.anomaly_table.item(row, col)
+                    item.setForeground(QBrush(QColor(255, 0, 0)))
+        else:
+            # Show normal status
+            self.anomaly_status.setText("System Status: Normal ✓")
+            self.anomaly_status.setStyleSheet("""
+                QLabel {
+                    font-size: 16px;
+                    padding: 10px;
+                    border-radius: 5px;
+                    background-color: #2ecc71;
+                    color: white;
+                }
+            """)
+            # Update last run time
+            current_time = time.strftime("%Y-%m-%d %H:%M:%S")
+            self.last_run_time.setText(f"Last Run: {current_time}")
+            
+            self.anomaly_table.setUpdatesEnabled(False)
+
+        self.anomaly_table.setUpdatesEnabled(True)
+
 
     def closeEvent(self, event):
         if self.background_checkbox.isChecked():
