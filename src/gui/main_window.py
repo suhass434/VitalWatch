@@ -3,7 +3,6 @@ from PyQt5.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QGr
 from PyQt5.QtChart import QChart, QChartView, QLineSeries, QValueAxis
 from PyQt5.QtCore import Qt
 from PyQt5.QtGui import QColor, QBrush, QPen, QFont, QPainter
-import threading
 from src.gui.styleSheet import STYLE_SHEET
 import yaml
 import sys

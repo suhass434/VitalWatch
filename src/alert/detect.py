@@ -31,7 +31,7 @@ def detect_anomalies(data_file: str, THRESHOLD_STEP: int) -> pd.DataFrame:
     anomalies = df[y_pred == -1]
 
     #print(f"Detected {len(anomalies)} anomalies")
-    if (len(anomalies) > THRESHOLD_STEP * 0.8):
+    if (len(anomalies) > THRESHOLD_STEP * 0):
         print("Anomaly detected")
         return anomalies
     else:
