@@ -1,4 +1,3 @@
-```markdown
 # VitalWatch - Real-time System Monitoring
 
 VitalWatch is a powerful, lightweight system monitoring tool designed to provide real-time insights into your system's performance. With a clean and modern interface, it offers detailed performance graphs, anomaly detection, and historical data analysis to help you keep your system running smoothly.
@@ -78,4 +77,3 @@ VitalWatch is released under the MIT License. See the [LICENSE](https://github.c
 ---
 
 **Enjoy monitoring your system with VitalWatch!**
-```
