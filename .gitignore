@@ -6,3 +6,4 @@ junk
 *.log
 packaging
 assistant/__pycache__
+.env
