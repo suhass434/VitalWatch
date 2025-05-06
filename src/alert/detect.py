@@ -34,7 +34,7 @@ def detect_anomalies(data_file: str, THRESHOLD_STEP: int) -> pd.DataFrame:
     if (len(anomalies) > THRESHOLD_STEP * 0):
         print("Anomaly detected")
         return anomalies
-    else:
+    else:   
         print("No anomaly detected")
         return None
         

@@ -4,3 +4,14 @@ PyYAML
 psutil
 scikit-learn
 pandas
+generativeai
+jsonschema
+pyaudio
+SpeechRecognition
+aioconsole
+vosk 
+sounddevice
+
+#Global installs
+#alsa-utils
+#sox

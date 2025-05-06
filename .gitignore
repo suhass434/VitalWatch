@@ -5,3 +5,4 @@ junk
 *.csv
 *.log
 packaging
+assistant/__pycache__
