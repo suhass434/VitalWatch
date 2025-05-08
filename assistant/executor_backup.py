@@ -14,36 +14,25 @@ def execute(command: dict, dry_run: bool=False):
     if dry_run:
         print("[dry-run]", command)
         return None
-        
+
     if command["action"] == "shutdown":
         subprocess.run(["shutdown", "-h", "now"], check=True)
         return "Shutdown initiated."
-        
+
     if command["action"] == "open_file":
         subprocess.run(["xdg-open", command["target"]], check=True)
         return f"Opened file: {command['target']}"
-        
+
     if command["action"] == "run_command":
-        target_command = command["target"]
-        
-        # Check if the command ends with & (background execution)
-        is_background = target_command.strip().endswith('&')
-        
-        # For commands that need output captured, remove the trailing &
-        if is_background and any(info_cmd in target_command for info_cmd in 
-                                ['inxi', 'lscpu', 'free', 'df', 'top', 'ps', 'neofetch', 'systeminfo']):
-            target_command = target_command.strip()[:-1].strip()
-            
         # Capture stdout
         result = subprocess.run(
-            target_command,
+            command["target"],
             shell=True,
             check=True,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             text=True
         )
-        
         return result.stdout
-        
+
     raise RuntimeError("Unknown action")
