@@ -66,7 +66,7 @@ async def process_user_input(user_text, os_distro):
             print("Executed.")
 
             if result:
-                summary_text = summarize_output(cmd["target"], result, os_distro)
+                summary_text = summarize_output(user_query=user_text, command=cmd["target"], output=result, os_distro=os_distro)
                 print(summary_text)
                 if VOICE_MODE:
                     await speak(summary_text)

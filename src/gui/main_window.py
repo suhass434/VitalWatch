@@ -1,15 +1,30 @@
 from PyQt5.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, QTabWidget, QPushButton, QLabel, QTableWidget, QTableWidgetItem,
-                             QHeaderView, QGroupBox, QCheckBox, QButtonGroup, QRadioButton, QApplication, QGraphicsRectItem, QGraphicsDropShadowEffect)
+                             QHeaderView, QGroupBox, QCheckBox, QButtonGroup, QRadioButton, QApplication, QGraphicsRectItem, QGraphicsDropShadowEffect, QLineEdit)
+from PyQt5.QtWidgets import (QTextEdit, QDialog, QListWidget, QListWidgetItem, 
+                            QMessageBox, QVBoxLayout, QHBoxLayout)
+from PyQt5.QtCore import Qt, QSize
+from PyQt5.QtGui import QColor
 from PyQt5.QtChart import QChart, QChartView, QLineSeries, QValueAxis
-from PyQt5.QtCore import Qt
+from PyQt5.QtCore import Qt, pyqtSignal, QObject
 from PyQt5.QtGui import QColor, QBrush, QPen, QFont, QPainter
 from src.gui.styleSheet import STYLE_SHEET
 import yaml
 import sys
 import pandas as pd
 import time
+import edge_tts
+import tempfile
+import os
+import asyncio
 
 from src.alert.detect import detect_anomalies
+import threading
+import asyncio
+from assistant.main import main_loop as assistant_main_loop
+from assistant.llm_client import query_llm, summarize_output
+from assistant.parser import parse_response
+from assistant.executor import is_safe, execute
+import assistant.config
 
 def load_config():
     """
@@ -24,6 +39,104 @@ def load_config():
     
 THRESHOLD_STEP = load_config()['monitoring']['anomaly_detection_interval']
 OUTPUT_CSV = "src/data/preprocess_data.csv"
+
+class CommandExecutor(QObject):
+    command_finished = pyqtSignal(str, str)
+    
+    def execute_command(self, command):
+        try:
+            # Run in separate thread
+            result = execute(command)
+            self.command_finished.emit(command["target"], result)
+        except Exception as e:
+            self.command_finished.emit(command["target"], str(e))
+
+class NovaWorker(QObject):
+    """Worker class for Nova assistant commands"""
+    status_update = pyqtSignal(str)
+    state_update = pyqtSignal(str)
+    message_update = pyqtSignal(str, str)
+    speak_signal = pyqtSignal(str)
+    finished = pyqtSignal()
+    confirmation_needed = pyqtSignal(dict, str)  # Command, OS distro
+
+    def __init__(self, user_input, os_distro):
+        super().__init__()
+        self.user_input = user_input
+        self.os_distro = os_distro
+        
+    def process_command(self):
+        # Update status via signal
+        self.status_update.emit("Processing your request...")
+        self.state_update.emit("processing")
+        
+        try:
+            # Query LLM
+            raw = query_llm(self.user_input, self.os_distro)
+            
+            # Parse response
+            try:
+                cmd = parse_response(raw)
+            except ValueError as e:
+                response = f"Error parsing response: {e}"
+                self.message_update.emit("Nova", response)
+                self.speak_signal.emit(response)
+                self.state_update.emit("error")
+                self.finished.emit()
+                return
+                
+            # Handle command or conversation
+            if cmd["type"] == "command":
+                if assistant.config.USE_SAFE_FLAG and not is_safe(cmd):
+                    response = "Sorry, that command is not allowed for security reasons."
+                    self.message_update.emit("Nova", response)
+                    self.speak_signal.emit(response)
+                    self.state_update.emit("error")
+                    self.finished.emit()
+                    return
+                
+                # For commands requiring confirmation, send a signal back
+                if assistant.config.FORCE_CONFIRM:
+                    self.status_update.emit("Waiting for confirmation...")
+                    self.state_update.emit("idle")
+                    self.confirmation_needed.emit(cmd, self.os_distro)
+                    return
+
+                # Execute command
+                try:
+                    result = execute(cmd)
+                    
+                    # Summarize result
+                    if result:
+                        summary = summarize_output(user_query=self.user_input, command=cmd["target"], output=result, os_distro=self.os_distro)
+                        self.message_update.emit("Nova", summary)
+                        self.state_update.emit("speaking")
+                        self.speak_signal.emit(summary)
+                    else:
+                        response = "Command executed successfully."
+                        self.message_update.emit("Nova", response)
+                        self.state_update.emit("speaking")
+                        self.speak_signal.emit(response)
+                except Exception as e:
+                    response = f"Error executing command: {e}"
+                    self.message_update.emit("Nova", response)
+                    self.state_update.emit("error")
+                    self.speak_signal.emit(response)
+            
+            elif cmd["type"] == "conversation":
+                self.message_update.emit("Nova", cmd["response"])
+                self.state_update.emit("speaking")
+                self.speak_signal.emit(cmd["response"])
+        
+        except Exception as e:
+            response = f"An error occurred: {e}"
+            self.message_update.emit("Nova", response)
+            self.state_update.emit("error")
+            self.speak_signal.emit(response)
+        
+        finally:
+            self.status_update.emit("Nova is ready. Type a command or question.")
+            self.finished.emit()
 
 class MainWindow(QMainWindow):
     def __init__(self):
@@ -61,6 +174,12 @@ class MainWindow(QMainWindow):
         self.network_chart = QChart()
         #self.cpu_temp_chart = QChart()
         
+        #initialisations
+        self.VOICE_MODE = False
+        self.is_speaking = False
+        self.speech_event = threading.Event()
+        self.speech_event.set()  # Initially not speaking
+
         self.setup_ui()  
 
     def set_theme(self, mode='dark'):
@@ -305,6 +424,29 @@ class MainWindow(QMainWindow):
         
         if hasattr(self, 'overview_tab'):
             self.overview_tab.setStyleSheet(overview_style)
+
+        nova_style = f"""
+        QLineEdit {{
+            background-color: {colors['background_color']};
+            color: {colors['text_color']};
+            border: 1px solid {colors['border_color']};
+            padding: 8px;
+            border-radius: 4px;
+        }}
+
+        QLineEdit:focus {{
+            border: 2px solid {colors['line']};
+        }}
+        """
+
+        self.nova_input.setStyleSheet(nova_style)
+        self.nova_status.setStyleSheet(f"""
+            QLabel {{
+                color: {colors['text_color']};
+                padding: 5px;
+                font-size: 12px;
+            }}
+        """)
 
     def set_dark_mode(self):
         """Switch to dark mode"""
@@ -696,16 +838,95 @@ class MainWindow(QMainWindow):
         self.dark_button.toggled.connect(self.set_dark_mode)
         theme_layout.addWidget(self.dark_button)
 
-
         self.light_button = QRadioButton("Light Mode")
         self.light_button.toggled.connect(self.set_light_mode)
         theme_layout.addWidget(self.light_button)
 
         theme_group.setLayout(theme_layout)
 
+        # Command confirmation option
+        command_group = QGroupBox("Command Execution")
+        command_layout = QVBoxLayout()
+        self.confirm_checkbox = QCheckBox("Require confirmation before executing commands")
+        self.confirm_checkbox.setChecked(assistant.config.FORCE_CONFIRM)  # Set initial state from config
+        self.confirm_checkbox.toggled.connect(self.toggle_command_confirmation)
+                
+        command_layout.addWidget(self.confirm_checkbox)
+        command_group.setLayout(command_layout)
+
         self.settings_layout.addWidget(background_group)
         self.settings_layout.addWidget(theme_group)
+        self.settings_layout.addWidget(command_group)
         self.settings_layout.addStretch()
+
+        # Nova Assistant tab
+        nova_widget = QWidget()
+        nova_layout = QVBoxLayout(nova_widget)
+
+        # Add title and description
+        nova_title = QLabel("Nova Virtual Assistant")
+        nova_title.setStyleSheet("font-size: 18px; font-weight: bold;")
+        nova_title.setAlignment(Qt.AlignCenter)
+
+        nova_description = QLabel("Nova is an intelligent system-command assistant that can help you with system tasks and answer questions.")
+        nova_description.setWordWrap(True)
+        nova_description.setAlignment(Qt.AlignCenter)
+
+        # Create visual feedback area (centered icon)
+        self.feedback_container = QWidget()
+        feedback_layout = QVBoxLayout(self.feedback_container)
+        self.assistant_icon = QLabel()
+        self.assistant_icon.setAlignment(Qt.AlignCenter)
+        self.set_assistant_state("idle")  # Set default state
+        feedback_layout.addWidget(self.assistant_icon)
+
+        # Create conversation display (replacing table widget)
+        self.nova_conversation = QTextEdit()
+        self.nova_conversation.setReadOnly(True)
+        self.nova_conversation.setMinimumHeight(200)
+        self.nova_conversation.setStyleSheet("""
+            QTextEdit {
+                border: 1px solid #3c3c3c;
+                border-radius: 8px;
+                padding: 8px;
+                background-color: #2d2d2d;
+            }
+        """)
+
+        # Create input field and buttons
+        input_container = QWidget()
+        input_layout = QHBoxLayout(input_container)
+        input_layout.setContentsMargins(0, 10, 0, 0)
+
+        self.nova_input = QLineEdit()
+        self.nova_input.setPlaceholderText("Type your command or question here...")
+        self.nova_input.returnPressed.connect(self.send_nova_command)
+
+        self.nova_send_button = QPushButton("Send")
+        self.nova_send_button.clicked.connect(self.send_nova_command)
+
+        self.nova_voice_button = QPushButton("Voice Mode")
+        self.nova_voice_button.clicked.connect(self.toggle_nova_voice_mode)
+
+        self.nova_history_button = QPushButton("History")
+        self.nova_history_button.clicked.connect(self.show_nova_history)
+
+        input_layout.addWidget(self.nova_input)
+        input_layout.addWidget(self.nova_send_button)
+        input_layout.addWidget(self.nova_voice_button)
+        input_layout.addWidget(self.nova_history_button)
+
+        # Add status indicator
+        self.nova_status = QLabel("Nova is ready. Type a command or question.")
+        self.nova_status.setAlignment(Qt.AlignCenter)
+
+        # Add all widgets to the layout
+        nova_layout.addWidget(nova_title)
+        nova_layout.addWidget(nova_description)
+        nova_layout.addWidget(self.feedback_container)
+        nova_layout.addWidget(self.nova_conversation)
+        nova_layout.addWidget(input_container)
+        nova_layout.addWidget(self.nova_status)
 
         #read only
         self.process_table.setEditTriggers(QTableWidget.NoEditTriggers)
@@ -718,6 +939,7 @@ class MainWindow(QMainWindow):
         # add all tabs and load set_dark_mode by default
         self.set_dark_mode()
         tabs.addTab(overview_widget, "Overview")
+        tabs.addTab(nova_widget, "Nova Assistant")
         tabs.addTab(cpu_widget, "CPU Details")
         tabs.addTab(memory_widget, "Memory Details")
         tabs.addTab(disk_widget, "Disk Details")
@@ -727,6 +949,594 @@ class MainWindow(QMainWindow):
         tabs.addTab(processes_widget, "Processes")
         tabs.addTab(self.settings_widget, "Settings")
 
+    def set_assistant_state(self, state):
+        """Set the assistant icon based on the current state"""
+        icon_size = QSize(128, 128)
+        
+        # Define base64 icons or paths to image files
+        # For now we'll use emoji placeholders
+        icons = {
+            "idle": "🤖",      # Robot face
+            "listening": "👂",  # Ear
+            "processing": "🔄",  # Processing
+            "speaking": "🔊",   # Speaking
+            "error": "❌"       # Error
+        }
+        
+        # You can replace this with actual QPixmap loading from files
+        # For example: self.assistant_icon.setPixmap(QPixmap("path/to/icons/idle.png").scaled(icon_size))
+        
+        # For now, we'll just set text (emoji)
+        self.assistant_icon.setText(icons.get(state, icons["idle"]))
+        self.assistant_icon.setStyleSheet("font-size: 72px;")
+        
+        # If we were using real images:
+        # self.assistant_icon.setPixmap(QPixmap(f"assets/nova_{state}.png").scaled(icon_size))
+
+    def animate_audio_reaction(self, level):
+        """Animate the assistant icon based on audio levels (for future implementation)"""
+        # This would animate the icon based on audio input level
+        # Placeholder for future implementation
+        # Could adjust size, color, or swap images based on audio level
+        pass
+
+    def initialize_nova(self):
+        self.command_executor = CommandExecutor()
+        self.command_executor.command_finished.connect(self.on_command_finished)
+        
+    def on_command_finished(self, command, result):
+        # Update UI here - this will run in the main thread
+        self.add_nova_message("Nova", summarize_output(command, result, self.os_distro))
+
+    def send_nova_command(self):
+        """Send a command to Nova assistant using thread-safe approach"""
+        user_input = self.nova_input.text().strip()
+        if not user_input:
+            return
+            
+        # Clear input field
+        self.nova_input.clear()
+        
+        # Add user message to output
+        self.add_nova_message("You", user_input)
+        
+        # Create worker and thread
+        from PyQt5.QtCore import QThread
+        self.nova_thread = QThread()
+        self.nova_worker = NovaWorker(user_input, "Garuda Linux")
+        self.nova_worker.moveToThread(self.nova_thread)
+        
+        # Connect signals and slots
+        self.nova_worker.status_update.connect(self.nova_status.setText)
+        self.nova_worker.state_update.connect(self.set_assistant_state)
+        self.nova_worker.message_update.connect(self.add_nova_message)
+        self.nova_worker.speak_signal.connect(self.speak_text)
+        self.nova_worker.confirmation_needed.connect(self.handle_command_confirmation)
+        self.nova_worker.finished.connect(self.nova_thread.quit)
+        self.nova_worker.finished.connect(self.nova_worker.deleteLater)
+        self.nova_thread.finished.connect(self.nova_thread.deleteLater)
+        
+        # Start processing when thread starts
+        self.nova_thread.started.connect(self.nova_worker.process_command)
+        
+        # Start the thread
+        self.nova_thread.start()
+
+    def process_nova_command(self, user_input):
+        """Process Nova command in a separate thread"""
+        # Get OS distribution
+        os_distro = "Garuda Linux"  # You can make this configurable
+        
+        # Update UI to show processing state
+        self.nova_status.setText("Processing your request...")
+        self.set_assistant_state("processing")
+        
+        try:
+            # Query LLM
+            raw = query_llm(user_input, os_distro)
+            
+            # Parse response
+            try:
+                cmd = parse_response(raw)
+            except ValueError as e:
+                response = f"Error parsing response: {e}"
+                self.add_nova_message("Nova", response)
+                self.speak_text(response)
+                self.nova_status.setText("Nova is ready. Type a command or question.")
+                self.set_assistant_state("error")
+                time.sleep(1)
+                self.set_assistant_state("idle")
+                return
+                
+            # Handle command or conversation
+            if cmd["type"] == "command":
+                if assistant.config.USE_SAFE_FLAG and not is_safe(cmd):
+                    response = "Sorry, that command is not allowed for security reasons."
+                    self.add_nova_message("Nova", response)
+                    self.speak_text(response)
+                    self.nova_status.setText("Nova is ready. Type a command or question.")
+                    self.set_assistant_state("error")
+                    time.sleep(1)
+                    self.set_assistant_state("idle")
+                    return
+                    
+                # Ask for confirmation
+                if assistant.config.FORCE_CONFIRM:
+                    # Update UI state while waiting for confirmation
+                    self.nova_status.setText("Waiting for confirmation...")
+                    self.set_assistant_state("idle")
+                    
+                    # Use a signal to ask for confirmation in the main thread
+                    confirmation = self.ask_confirmation(f"Execute {cmd['action']} → {cmd['target']}?")
+                    if not confirmation:
+                        response = "Command cancelled."
+                        self.add_nova_message("Nova", response)
+                        self.speak_text(response)
+                        self.nova_status.setText("Nova is ready. Type a command or question.")
+                        return
+                    
+                    # Restore processing state
+                    self.nova_status.setText("Executing command...")
+                    self.set_assistant_state("processing")
+                
+                # Initialize result variable before try block
+                result = None
+                
+                try:
+                    # Execute command
+                    result = execute(cmd)
+                    
+                    # Summarize result
+                    if result:
+                        summary = summarize_output(cmd["target"], result, os_distro)
+                        self.add_nova_message("Nova", summary)
+                        self.set_assistant_state("speaking")
+                        self.speak_text(summary)
+                    else:
+                        response = "Command executed successfully."
+                        self.add_nova_message("Nova", response)
+                        self.set_assistant_state("speaking")
+                        self.speak_text(response)
+                except Exception as e:
+                    response = f"Error executing command: {e}"
+                    self.add_nova_message("Nova", response)
+                    self.set_assistant_state("error")
+                    self.speak_text(response)
+            
+            elif cmd["type"] == "conversation":
+                self.add_nova_message("Nova", cmd["response"])
+                self.set_assistant_state("speaking")
+                self.speak_text(cmd["response"])
+        
+        except Exception as e:
+            response = f"An error occurred: {e}"
+            self.add_nova_message("Nova", response)
+            self.set_assistant_state("error")
+            self.speak_text(response)
+        
+        finally:
+            # Delay returning to idle state until after speaking
+            self.nova_status.setText("Nova is ready. Type a command or question.")
+            time.sleep(0.5)
+            self.set_assistant_state("idle")
+
+    def add_nova_message(self, source, message):
+        """Add a message to the Nova conversation display"""
+        timestamp = time.strftime("%H:%M:%S")
+        
+        # Format message based on source
+        if source == "You":
+            self.nova_conversation.append(
+                f'<div style="margin: 10px 0;">'
+                f'<span style="color: #a8a8a8; font-size: 10px;">{timestamp}</span><br>'
+                f'<span style="font-weight: bold; color: #4e9af1;">{source}: </span>'
+                f'<span style="color: #ffffff;">{message}</span>'
+                f'</div>'
+            )
+        else:  # Nova or System
+            color = "#77dd77" if source == "Nova" else "#ffaa55"
+            self.nova_conversation.append(
+                f'<div style="margin: 10px 0;">'
+                f'<span style="color: #a8a8a8; font-size: 10px;">{timestamp}</span><br>'
+                f'<span style="font-weight: bold; color: {color};">{source}: </span>'
+                f'<span style="color: #ffffff;">{message}</span>'
+                f'</div>'
+            )
+        
+        # Auto-scroll to the bottom
+        self.nova_conversation.verticalScrollBar().setValue(
+            self.nova_conversation.verticalScrollBar().maximum()
+        )
+        
+        # Store in history
+        self.store_message_in_history(source, message)
+
+    def store_message_in_history(self, source, message):
+        """Store message in history for later retrieval"""
+        if not hasattr(self, 'nova_history'):
+            self.nova_history = []
+        
+        timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
+        self.nova_history.append({
+            "timestamp": timestamp,
+            "source": source,
+            "message": message
+        })
+        
+        # Optionally save to a file
+        # self.save_nova_history()
+
+    def show_nova_history(self):
+        """Show dialog with conversation history"""
+        if not hasattr(self, 'nova_history') or not self.nova_history:
+            QMessageBox.information(self, "History", "No conversation history available.")
+            return
+        
+        # Create a new dialog
+        history_dialog = QDialog(self)
+        history_dialog.setWindowTitle("Nova Conversation History")
+        history_dialog.setMinimumSize(600, 400)
+        
+        # Dialog layout
+        layout = QVBoxLayout(history_dialog)
+        
+        # Create history list widget
+        history_list = QListWidget()
+        history_list.setAlternatingRowColors(True)
+        
+        # Group conversations by date
+        conversations = {}
+        for entry in self.nova_history:
+            date = entry["timestamp"].split()[0]
+            if date not in conversations:
+                conversations[date] = []
+            conversations[date].append(entry)
+        
+        # Add conversations to list widget
+        for date, entries in sorted(conversations.items(), reverse=True):
+            date_item = QListWidgetItem(f"=== {date} ===")
+            date_item.setBackground(QColor(60, 60, 60))
+            date_item.setForeground(QColor(200, 200, 200))
+            date_item.setTextAlignment(Qt.AlignCenter)
+            history_list.addItem(date_item)
+            
+            for entry in entries:
+                time = entry["timestamp"].split()[1]
+                item_text = f"{time} - {entry['source']}: {entry['message']}"
+                item = QListWidgetItem(item_text)
+                
+                # Style based on source
+                if entry["source"] == "You":
+                    item.setForeground(QColor(78, 154, 241))
+                elif entry["source"] == "Nova":
+                    item.setForeground(QColor(119, 221, 119))
+                else:
+                    item.setForeground(QColor(255, 170, 85))
+                    
+                history_list.addItem(item)
+        
+        # Add buttons
+        button_container = QWidget()
+        button_layout = QHBoxLayout(button_container)
+        
+        clear_button = QPushButton("Clear History")
+        clear_button.clicked.connect(lambda: self.clear_nova_history(history_dialog, history_list))
+        
+        close_button = QPushButton("Close")
+        close_button.clicked.connect(history_dialog.accept)
+        
+        button_layout.addWidget(clear_button)
+        button_layout.addStretch()
+        button_layout.addWidget(close_button)
+        
+        # Add widgets to dialog
+        layout.addWidget(history_list)
+        layout.addWidget(button_container)
+        
+        # Show dialog
+        history_dialog.exec_()
+
+    def clear_nova_history(self, dialog, list_widget):
+        """Clear the conversation history"""
+        reply = QMessageBox.question(
+            dialog,
+            "Clear History",
+            "Are you sure you want to clear all conversation history?",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No
+        )
+        
+        if reply == QMessageBox.Yes:
+            self.nova_history = []
+            list_widget.clear()
+            QMessageBox.information(dialog, "History", "Conversation history cleared.")
+
+
+    def ask_confirmation(self, message):
+        """Ask for confirmation in a dialog"""
+        from PyQt5.QtWidgets import QMessageBox
+        reply = QMessageBox.question(self, 'Confirmation', message, 
+                                    QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
+        return reply == QMessageBox.Yes
+
+    def toggle_nova_voice_mode(self):
+        """Toggle Nova voice command mode"""
+        if self.nova_voice_button.text() == "Voice Mode":
+            # Enable voice mode
+            self.nova_voice_button.setText("Stop Voice")
+            self.nova_status.setText("Voice mode active. Speak your commands.")
+            self.VOICE_MODE = True  # Set the flag explicitly
+            self.set_assistant_state("listening")
+            threading.Thread(target=self.start_nova_voice_mode, daemon=True).start()
+        else:
+            # Disable voice mode
+            self.nova_voice_button.setText("Voice Mode")
+            self.nova_status.setText("Voice mode deactivated.")
+            self.VOICE_MODE = False  # Set the flag explicitly
+            self.set_assistant_state("idle")
+
+    def process_cpu_command(self, user_input):
+        """Process CPU information commands safely"""
+        os_distro = "Garuda Linux"
+        
+        try:
+            # Update UI
+            self.set_assistant_state("processing")
+            self.nova_status.setText("Processing CPU information request...")
+            
+            # Directly execute inxi command
+            command = {
+                "type": "command",
+                "action": "run_command",
+                "target": "inxi -C",  # Use -C flag for CPU info
+                "confirm": False,
+                "safe": True
+            }
+            
+            # Execute with proper error handling
+            try:
+                result = execute(command)
+                summary = summarize_output("inxi -C", result, os_distro)
+                
+                # Update UI in the main thread
+                self.add_nova_message("Nova", summary)
+                self.set_assistant_state("speaking")
+                
+                # Speak the result
+                self.speak_text(summary)
+            except Exception as e:
+                response = f"Error retrieving CPU information: {e}"
+                self.add_nova_message("Nova", response)
+                self.set_assistant_state("error")
+                self.speak_text(response)
+                
+        except Exception as e:
+            self.add_nova_message("Nova", f"An error occurred: {e}")
+            self.set_assistant_state("error")
+        finally:
+            # Reset UI state
+            self.nova_status.setText("Nova is ready. Type a command or question.")
+
+    def start_nova_voice_mode(self):
+        """Start Nova voice command mode in a separate thread"""
+        import speech_recognition as sr
+        
+        # Only proceed if voice mode is active
+        if not self.VOICE_MODE:
+            return
+        
+        # Add voice feedback when voice mode is activated
+        self.speak_text("Voice mode activated. Speak your commands.")
+        
+        recognizer = sr.Recognizer()
+        
+        # Create microphone instance outside the loop
+        mic = sr.Microphone()
+        
+        # Initial noise adjustment
+        with mic as source:
+            # Allow more time for ambient noise calibration
+            recognizer.adjust_for_ambient_noise(source, duration=1.0)
+        
+        # Continue as long as we're in voice mode
+        while self.VOICE_MODE and self.nova_voice_button.text() == "Stop Voice":
+            try:
+                # Wait for any ongoing speech to complete
+                if self.is_speaking:
+                    time.sleep(0.1)  # Small delay to prevent CPU thrashing
+                    continue
+                    
+                with mic as source:
+                    # Only enter listening state when not speaking
+                    if not self.is_speaking:
+                        self.set_assistant_state("listening")
+                        self.add_nova_message("System", "Listening...")
+                        
+                        # Add timeout to prevent indefinite listening
+                        audio = recognizer.listen(source, timeout=5, phrase_time_limit=8)
+                        
+                        # Check if still in voice mode
+                        if not self.VOICE_MODE:
+                            break
+                        
+                        # Process the audio
+                        self.set_assistant_state("processing") 
+                        self.nova_status.setText("Processing speech...")
+                        
+                        text = recognizer.recognize_google(audio).lower()
+                        
+                        if text:
+                            # Check if still in voice mode
+                            if not self.VOICE_MODE:
+                                break
+                                
+                            self.add_nova_message("You", text)
+                            
+                            # Process the command
+                            self.process_nova_command(text)
+                            
+                            # Exit voice mode if "stop" was said
+                            if text.lower() == "stop":
+                                self.VOICE_MODE = False
+                                self.nova_voice_button.setText("Voice Mode")
+                                self.nova_status.setText("Voice mode deactivated.")
+                                self.speak_text("Voice mode deactivated.")
+                                break
+                    
+            except sr.WaitTimeoutError:
+                # Just continue if timeout occurs
+                continue
+            except sr.UnknownValueError:
+                # Only show error if we're not speaking and still in voice mode
+                if not self.is_speaking and self.VOICE_MODE:
+                    self.add_nova_message("System", "Sorry, could not understand.")
+                    self.speak_text("Sorry, could not understand.")
+            except Exception as e:
+                if self.VOICE_MODE:
+                    self.add_nova_message("System", f"Error: {e}")
+                    print(f"Voice recognition error: {e}")
+                
+            # Small pause between recognition attempts
+            time.sleep(0.2)
+            
+            # Check if we've exited voice mode
+            if not self.VOICE_MODE or self.nova_voice_button.text() != "Stop Voice":
+                break
+
+    def handle_command_confirmation(self, cmd, os_distro):
+        """Handle confirmation for commands in the main thread"""
+        confirmation = self.ask_confirmation(f"Execute {cmd['action']} → {cmd['target']}?")
+        
+        if confirmation:
+            # Create a new worker to execute the confirmed command
+            self.execute_worker = NovaWorker("", os_distro)
+            self.execute_worker.status_update.connect(self.nova_status.setText)
+            self.execute_worker.state_update.connect(self.set_assistant_state)
+            self.execute_worker.message_update.connect(self.add_nova_message)
+            self.execute_worker.speak_signal.connect(self.speak_text)
+            self.execute_worker.finished.connect(self.execute_worker.deleteLater)
+            
+            # Execute the command directly using a method in the worker
+            result = execute(cmd)
+            
+            # Process the result
+            if result:
+                summary = summarize_output(cmd["target"], result, os_distro)
+                self.add_nova_message("Nova", summary)
+                self.set_assistant_state("speaking")
+                self.speak_text(summary)
+            else:
+                response = "Command executed successfully."
+                self.add_nova_message("Nova", response)
+                self.set_assistant_state("speaking")
+                self.speak_text(response)
+        else:
+            # Command was rejected
+            response = "Command cancelled."
+            self.add_nova_message("Nova", response)
+            self.set_assistant_state("idle")
+            self.speak_text(response)
+        
+        self.nova_status.setText("Nova is ready. Type a command or question.")
+
+    def speak_text(self, text: str):
+        """Generate speech using edge-tts and block listening during speech"""
+        # Skip if text is empty
+        if not text:
+            return
+        
+        # List of special messages that should always be spoken
+        special_messages = [
+            "Voice mode activated. Speak your commands.",
+            "Voice mode deactivated.",
+            "Sorry, could not understand."
+        ]
+        
+        # Only speak if voice mode is active or if it's a special message
+        if not self.VOICE_MODE and text not in special_messages:
+            return
+            
+        # Set speaking state
+        self.is_speaking = True
+        self.speech_event.clear()  # Mark speech as in progress
+        self.set_assistant_state("speaking")
+        
+        def run_tts():
+            try:
+                # Create a new event loop for the thread
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+                
+                # Run the TTS coroutine
+                loop.run_until_complete(self._tts_coroutine(text))
+            except Exception as e:
+                print(f"TTS Thread Error: {e}")
+            finally:
+                # Reset speaking state
+                self.is_speaking = False
+                self.speech_event.set()  # Mark speech as completed
+                
+                # Update UI state from main thread
+                from PyQt5.QtCore import QTimer
+                QTimer.singleShot(0, lambda: self.set_assistant_state("idle"))
+                QTimer.singleShot(0, lambda: self.nova_status.setText("Nova is ready. Type a command or question."))
+        
+        # Run in a separate thread
+        threading.Thread(target=run_tts, daemon=True).start()
+
+    async def _tts_coroutine(self, text: str):
+        """Async coroutine for text-to-speech"""
+        tmp_path = None
+        
+        try:
+            communicate = edge_tts.Communicate(text, voice="en-US-AriaNeural")
+            
+            # Create a temporary file to save the audio
+            with tempfile.NamedTemporaryFile(delete=False, suffix=".mp3") as tmp_file:
+                tmp_path = tmp_file.name
+            
+            # Generate audio file
+            await communicate.save(tmp_path)
+            
+            # Play the audio using the system command (blocking call)
+            os.system(f'play "{tmp_path}"')
+            
+            # Add small delay to ensure audio is completely finished
+            await asyncio.sleep(0.3)
+            
+        except Exception as e:
+            # Log the error
+            print(f"TTS Error: {e}")
+        finally:
+            # Clean up temporary file
+            if tmp_path and os.path.exists(tmp_path):
+                try:
+                    os.unlink(tmp_path)
+                except:
+                    pass
+
+    def toggle_command_confirmation(self, state):
+        """Toggle whether commands require confirmation before execution"""
+        config_module = sys.modules['assistant.config']
+        config_module.FORCE_CONFIRM = state
+
+        # Provide user feedback
+        status = "enabled" if state else "disabled"
+        self.add_nova_message("System", f"Command confirmation {status}.")
+
+    def save_assistant_config(self):
+        """Save assistant configuration to file"""
+        try:
+            config = {
+                'force_confirm': assistant.config.FORCE_CONFIRM,
+                'use_safe_flag': USE_SAFE_FLAG
+            }
+            
+            with open('config/assistant_config.yaml', 'w') as file:
+                yaml.dump(config, file)
+                
+        except Exception as e:
+            print(f"Error saving assistant config: {e}")
 
     def toggle_process_view(self):
         self.show_all_processes = not self.show_all_processes
@@ -898,6 +1708,9 @@ class MainWindow(QMainWindow):
 
 
     def closeEvent(self, event):
+        # Save assistant configuration
+        self.save_assistant_config()
+
         if self.background_checkbox.isChecked():
             # Minimize to tray instead of closing
             event.ignore()

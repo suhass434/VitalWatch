@@ -7,3 +7,7 @@ junk
 packaging
 assistant/__pycache__
 .env
+bugs.txt
+src/gui/main_window_2backup.py
+src/gui/backup_main_window.py
+assistant/executor_backup.py

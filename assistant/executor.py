@@ -26,24 +26,38 @@ def execute(command: dict, dry_run: bool=False):
     if command["action"] == "run_command":
         target_command = command["target"]
         
-        # Check if the command ends with & (background execution)
+        # Detect if command should run in background
         is_background = target_command.strip().endswith('&')
         
-        # For commands that need output captured, remove the trailing &
-        if is_background and any(info_cmd in target_command for info_cmd in 
-                                ['inxi', 'lscpu', 'free', 'df', 'top', 'ps', 'neofetch', 'systeminfo']):
-            target_command = target_command.strip()[:-1].strip()
-            
-        # Capture stdout
-        result = subprocess.run(
-            target_command,
-            shell=True,
-            check=True,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            text=True
-        )
+        # Detect system info commands that should not run in background
+        info_commands = ["inxi", "lscpu", "free", "df", "top", "ps", "neofetch", "systeminfo", "uname"]
+        is_info_command = any(cmd in target_command for cmd in info_commands)
         
-        return result.stdout
+        # Remove trailing & for info commands to capture output
+        if is_info_command and is_background:
+            target_command = target_command.strip()[:-1].strip()
+            is_background = False
+        
+        # Handle background processes differently
+        if is_background and not is_info_command:
+            # For background processes, use Popen and don't wait
+            subprocess.Popen(
+                target_command,
+                shell=True,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                start_new_session=True  # This detaches the process completely
+            )
+            return f"The {target_command.strip()[:-1]} command was successfully launched in the background."
+        else:
+            # For normal commands, use subprocess.run and capture output
+            result = subprocess.run(
+                target_command,
+                shell=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True
+            )
+            return result.stdout
         
     raise RuntimeError("Unknown action")
