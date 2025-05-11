@@ -11,6 +11,7 @@ SpeechRecognition
 aioconsole
 vosk 
 sounddevice
+distro
 
 #Global installs
 #alsa-utils

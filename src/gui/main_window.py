@@ -2,7 +2,7 @@ from PyQt5.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QGr
                              QHeaderView, QGroupBox, QCheckBox, QButtonGroup, QRadioButton, QApplication, QGraphicsRectItem, QGraphicsDropShadowEffect, QLineEdit)
 from PyQt5.QtWidgets import (QTextEdit, QDialog, QListWidget, QListWidgetItem, 
                             QMessageBox, QVBoxLayout, QHBoxLayout)
-from PyQt5.QtCore import Qt, QSize
+from PyQt5.QtCore import Qt, QSize, QThread
 from PyQt5.QtGui import QColor
 from PyQt5.QtChart import QChart, QChartView, QLineSeries, QValueAxis
 from PyQt5.QtCore import Qt, pyqtSignal, QObject
@@ -16,7 +16,9 @@ import edge_tts
 import tempfile
 import os
 import asyncio
-
+import platform
+import distro
+from assistant.detect_os import get_os_distro
 from src.alert.detect import detect_anomalies
 import threading
 import asyncio
@@ -41,15 +43,14 @@ THRESHOLD_STEP = load_config()['monitoring']['anomaly_detection_interval']
 OUTPUT_CSV = "src/data/preprocess_data.csv"
 
 class CommandExecutor(QObject):
-    command_finished = pyqtSignal(str, str)
-    
-    def execute_command(self, command):
+    command_finished = pyqtSignal(str, str, str, str)  # Add user_query and os_distro
+
+    def execute_command(self, user_query, command, os_distro):  # Add parameters
         try:
-            # Run in separate thread
             result = execute(command)
-            self.command_finished.emit(command["target"], result)
+            self.command_finished.emit(user_query, command["target"], result, os_distro)
         except Exception as e:
-            self.command_finished.emit(command["target"], str(e))
+            self.command_finished.emit(user_query, command["target"], str(e), os_distro)
 
 class NovaWorker(QObject):
     """Worker class for Nova assistant commands"""
@@ -58,12 +59,11 @@ class NovaWorker(QObject):
     message_update = pyqtSignal(str, str)
     speak_signal = pyqtSignal(str)
     finished = pyqtSignal()
-    confirmation_needed = pyqtSignal(dict, str)  # Command, OS distro
-
+    confirmation_needed = pyqtSignal(dict, str, str)
     def __init__(self, user_input, os_distro):
         super().__init__()
         self.user_input = user_input
-        self.os_distro = os_distro
+        self.os_distro = get_os_distro()
         
     def process_command(self):
         # Update status via signal
@@ -99,7 +99,7 @@ class NovaWorker(QObject):
                 if assistant.config.FORCE_CONFIRM:
                     self.status_update.emit("Waiting for confirmation...")
                     self.state_update.emit("idle")
-                    self.confirmation_needed.emit(cmd, self.os_distro)
+                    self.confirmation_needed.emit(cmd, self.os_distro, self.user_input) 
                     return
 
                 # Execute command
@@ -179,7 +179,8 @@ class MainWindow(QMainWindow):
         self.is_speaking = False
         self.speech_event = threading.Event()
         self.speech_event.set()  # Initially not speaking
-
+        self.os_distro = get_os_distro()
+        
         self.setup_ui()  
 
     def set_theme(self, mode='dark'):
@@ -219,7 +220,37 @@ class MainWindow(QMainWindow):
                 background-color: {colors['grid_color']};
             }}
         """)
-        
+    
+        # Nova-specific styling
+        nova_style = f"""
+            QTextEdit {{
+                background-color: {colors['nova_bg']};
+                color: {colors['nova_text']};
+                border: 1px solid {colors['border_color']};
+                border-radius: 8px;
+                padding: 8px;
+            }}
+            
+            QLineEdit {{
+                background-color: {colors['input_bg']};
+                color: {colors['input_text']};
+                border: 1px solid {colors['border_color']};
+                padding: 8px;
+                border-radius: 4px;
+            }}
+            
+            QLabel#status_label {{
+                color: {colors['text_color']};
+                font-size: 12px;
+            }}
+        """
+
+        # Apply to Nova components
+        self.nova_conversation.setStyleSheet(nova_style)
+        self.nova_input.setStyleSheet(nova_style)
+        self.nova_status.setStyleSheet(nova_style)
+        self.nova_status.setObjectName("status_label")
+
         # Charts styling
         charts = [self.cpu_chart, self.memory_chart, self.disk_chart, self.network_chart]
         for chart in charts:
@@ -951,24 +982,28 @@ class MainWindow(QMainWindow):
 
     def set_assistant_state(self, state):
         """Set the assistant icon based on the current state"""
-        icon_size = QSize(128, 128)
+        icon_size = QSize(160, 160)
+
+        # Increase font-size from 96px to 120px
+        self.assistant_icon.setStyleSheet("""
+            QLabel {
+                font-size: 120px;  # Increased size
+                qproperty-alignment: AlignCenter;
+            }
+        """)
         
-        # Define base64 icons or paths to image files
-        # For now we'll use emoji placeholders
+        # Rest of the method remains the same...
         icons = {
-            "idle": "🤖",      # Robot face
-            "listening": "👂",  # Ear
-            "processing": "🔄",  # Processing
-            "speaking": "🔊",   # Speaking
-            "error": "❌"       # Error
+            "idle": "🤖",
+            "listening": "👂",
+            "processing": "🔄",
+            "speaking": "🔊",
+            "error": "❌"
         }
         
-        # You can replace this with actual QPixmap loading from files
-        # For example: self.assistant_icon.setPixmap(QPixmap("path/to/icons/idle.png").scaled(icon_size))
-        
-        # For now, we'll just set text (emoji)
+        icon_color = "#ffffff" if self.dark_button.isChecked() else "#000000"
+        self.assistant_icon.setStyleSheet(f"color: {icon_color};")
         self.assistant_icon.setText(icons.get(state, icons["idle"]))
-        self.assistant_icon.setStyleSheet("font-size: 72px;")
         
         # If we were using real images:
         # self.assistant_icon.setPixmap(QPixmap(f"assets/nova_{state}.png").scaled(icon_size))
@@ -984,9 +1019,8 @@ class MainWindow(QMainWindow):
         self.command_executor = CommandExecutor()
         self.command_executor.command_finished.connect(self.on_command_finished)
         
-    def on_command_finished(self, command, result):
-        # Update UI here - this will run in the main thread
-        self.add_nova_message("Nova", summarize_output(command, result, self.os_distro))
+    def on_command_finished(self, user_query, command, result, os_distro):
+        self.add_nova_message("Nova", summarize_output(user_query, command, result, os_distro))
 
     def send_nova_command(self):
         """Send a command to Nova assistant using thread-safe approach"""
@@ -1001,9 +1035,8 @@ class MainWindow(QMainWindow):
         self.add_nova_message("You", user_input)
         
         # Create worker and thread
-        from PyQt5.QtCore import QThread
         self.nova_thread = QThread()
-        self.nova_worker = NovaWorker(user_input, "Garuda Linux")
+        self.nova_worker = NovaWorker(user_input, self.os_distro)
         self.nova_worker.moveToThread(self.nova_thread)
         
         # Connect signals and slots
@@ -1011,7 +1044,7 @@ class MainWindow(QMainWindow):
         self.nova_worker.state_update.connect(self.set_assistant_state)
         self.nova_worker.message_update.connect(self.add_nova_message)
         self.nova_worker.speak_signal.connect(self.speak_text)
-        self.nova_worker.confirmation_needed.connect(self.handle_command_confirmation)
+        self.nova_worker.confirmation_needed.connect(lambda cmd, os, user: self.handle_command_confirmation(cmd, os, user))
         self.nova_worker.finished.connect(self.nova_thread.quit)
         self.nova_worker.finished.connect(self.nova_worker.deleteLater)
         self.nova_thread.finished.connect(self.nova_thread.deleteLater)
@@ -1025,7 +1058,7 @@ class MainWindow(QMainWindow):
     def process_nova_command(self, user_input):
         """Process Nova command in a separate thread"""
         # Get OS distribution
-        os_distro = "Garuda Linux"  # You can make this configurable
+        os_distro = self.os_distro  # You can make this configurable
         
         # Update UI to show processing state
         self.nova_status.setText("Processing your request...")
@@ -1088,7 +1121,12 @@ class MainWindow(QMainWindow):
                     
                     # Summarize result
                     if result:
-                        summary = summarize_output(cmd["target"], result, os_distro)
+                        summary = summarize_output(
+                            user_query=user_input,
+                            command=cmd["target"], 
+                            output=result, 
+                            os_distro=os_distro
+                        )
                         self.add_nova_message("Nova", summary)
                         self.set_assistant_state("speaking")
                         self.speak_text(summary)
@@ -1125,23 +1163,20 @@ class MainWindow(QMainWindow):
         timestamp = time.strftime("%H:%M:%S")
         
         # Format message based on source
+        colors = STYLE_SHEET['dark' if self.dark_button.isChecked() else 'light']
+    
         if source == "You":
-            self.nova_conversation.append(
-                f'<div style="margin: 10px 0;">'
-                f'<span style="color: #a8a8a8; font-size: 10px;">{timestamp}</span><br>'
-                f'<span style="font-weight: bold; color: #4e9af1;">{source}: </span>'
-                f'<span style="color: #ffffff;">{message}</span>'
-                f'</div>'
-            )
-        else:  # Nova or System
-            color = "#77dd77" if source == "Nova" else "#ffaa55"
-            self.nova_conversation.append(
-                f'<div style="margin: 10px 0;">'
-                f'<span style="color: #a8a8a8; font-size: 10px;">{timestamp}</span><br>'
-                f'<span style="font-weight: bold; color: {color};">{source}: </span>'
-                f'<span style="color: #ffffff;">{message}</span>'
-                f'</div>'
-            )
+            bubble_color = colors['user_bubble']
+        else:
+            bubble_color = colors['assistant_bubble']
+        
+        self.nova_conversation.append(
+            f'<div style="margin: 10px 0; color: {colors["nova_text"]};">'
+            f'<span style="color: {colors["axis_labels"]}; font-size: 10px;">{time.strftime("%H:%M:%S")}</span><br>'
+            f'<span style="font-weight: bold; color: {bubble_color};">{source}: </span>'
+            f'<span style="color: {colors["nova_text"]};">{message}</span>'
+            f'</div>'
+        )
         
         # Auto-scroll to the bottom
         self.nova_conversation.verticalScrollBar().setValue(
@@ -1277,7 +1312,7 @@ class MainWindow(QMainWindow):
 
     def process_cpu_command(self, user_input):
         """Process CPU information commands safely"""
-        os_distro = "Garuda Linux"
+        os_distro = self.os_distro
         
         try:
             # Update UI
@@ -1403,7 +1438,7 @@ class MainWindow(QMainWindow):
             if not self.VOICE_MODE or self.nova_voice_button.text() != "Stop Voice":
                 break
 
-    def handle_command_confirmation(self, cmd, os_distro):
+    def handle_command_confirmation(self, cmd, os_distro, user_input):
         """Handle confirmation for commands in the main thread"""
         confirmation = self.ask_confirmation(f"Execute {cmd['action']} → {cmd['target']}?")
         
@@ -1421,7 +1456,14 @@ class MainWindow(QMainWindow):
             
             # Process the result
             if result:
-                summary = summarize_output(cmd["target"], result, os_distro)
+                summary = summarize_output(
+                    user_query=user_input,
+                    command=cmd["target"], 
+                    output=result, 
+                    os_distro=os_distro
+                )
+
+                # summary = summarize_output(user_query: str, command: str, output: str, os_distro: str)
                 self.add_nova_message("Nova", summary)
                 self.set_assistant_state("speaking")
                 self.speak_text(summary)
@@ -1517,8 +1559,7 @@ class MainWindow(QMainWindow):
 
     def toggle_command_confirmation(self, state):
         """Toggle whether commands require confirmation before execution"""
-        config_module = sys.modules['assistant.config']
-        config_module.FORCE_CONFIRM = state
+        assistant.config.FORCE_CONFIRM = state
 
         # Provide user feedback
         status = "enabled" if state else "disabled"
@@ -1529,7 +1570,7 @@ class MainWindow(QMainWindow):
         try:
             config = {
                 'force_confirm': assistant.config.FORCE_CONFIRM,
-                'use_safe_flag': USE_SAFE_FLAG
+                'use_safe_flag': assistant.config.USE_SAFE_FLAG
             }
             
             with open('config/assistant_config.yaml', 'w') as file:

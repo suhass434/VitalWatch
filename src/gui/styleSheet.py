@@ -14,7 +14,13 @@ STYLE_SHEET = {
         "axis_labels": "#BFBFBF",
         "grid_lines": "#444444",
         "tick_marks": "#AAAAAA",
-        "button_text_color": "#CCCCCC"
+        "button_text_color": "#CCCCCC",
+        'nova_bg': '#2d2d2d',
+        'nova_text': '#ffffff',
+        'user_bubble': '#4e9af1',
+        'assistant_bubble': '#2e7d32',
+        'input_bg': '#3c3c3c',
+        'input_text': '#ffffff'
     },
     "light": {
         "background_color": "#FFFFFF",
@@ -31,6 +37,12 @@ STYLE_SHEET = {
         "axis_labels": "#666666",
         "grid_lines": "#CCCCCC",
         "tick_marks": "#888888",
-        "button_text_color": "#333333"
+        "button_text_color": "#333333",
+        'nova_bg': '#f5f5f5',
+        'nova_text': '#333333',
+        'user_bubble': '#2196F3',
+        'assistant_bubble': '#4CAF50',
+        'input_bg': '#ffffff',
+        'input_text': '#000000'
     }
 }
