@@ -20,7 +20,9 @@ STYLE_SHEET = {
         'user_bubble': '#4e9af1',
         'assistant_bubble': '#2e7d32',
         'input_bg': '#3c3c3c',
-        'input_text': '#ffffff'
+        'input_text': '#ffffff',
+        'focus_border': '#4a9cff',
+        'focus_bg': '#353535'
     },
     "light": {
         "background_color": "#FFFFFF",
@@ -43,6 +45,8 @@ STYLE_SHEET = {
         'user_bubble': '#2196F3',
         'assistant_bubble': '#4CAF50',
         'input_bg': '#ffffff',
-        'input_text': '#000000'
+        'input_text': '#000000',
+        'focus_border': '#0066cc',
+        'focus_bg': '#f0f0f0' 
     }
 }

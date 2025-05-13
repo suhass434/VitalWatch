@@ -3,7 +3,7 @@ from PyQt5.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QGr
 from PyQt5.QtWidgets import (QTextEdit, QDialog, QListWidget, QListWidgetItem, 
                             QMessageBox, QVBoxLayout, QHBoxLayout)
 from PyQt5.QtCore import Qt, QSize, QThread
-from PyQt5.QtGui import QColor
+from PyQt5.QtGui import QColor, QMovie, QPixmap
 from PyQt5.QtChart import QChart, QChartView, QLineSeries, QValueAxis
 from PyQt5.QtCore import Qt, pyqtSignal, QObject
 from PyQt5.QtGui import QColor, QBrush, QPen, QFont, QPainter
@@ -219,8 +219,33 @@ class MainWindow(QMainWindow):
             QTabBar::tab:hover {{
                 background-color: {colors['grid_color']};
             }}
+            QTextEdit {{
+                background-color: {colors['nova_bg']};
+                color: {colors['nova_text']};
+                border: 1px solid {colors['border_color']};
+                border-radius: 8px;
+                padding: 8px;
+            }}
+            
+            QLineEdit {{
+                background-color: {colors['input_bg']};
+                color: {colors['input_text']};
+                border: 1px solid {colors['border_color']};
+                padding: 8px;
+                border-radius: 4px;
+            }}
+            
+            QLineEdit:focus {{
+                border: 2px solid {colors['focus_border']};
+                background-color: {colors['focus_bg']};
+            }}
+            
+            QLabel#status_label {{
+                color: {colors['text_color']};
+                font-size: 12px;
+            }}
         """)
-    
+
         # Nova-specific styling
         nova_style = f"""
             QTextEdit {{
@@ -244,12 +269,6 @@ class MainWindow(QMainWindow):
                 font-size: 12px;
             }}
         """
-
-        # Apply to Nova components
-        self.nova_conversation.setStyleSheet(nova_style)
-        self.nova_input.setStyleSheet(nova_style)
-        self.nova_status.setStyleSheet(nova_style)
-        self.nova_status.setObjectName("status_label")
 
         # Charts styling
         charts = [self.cpu_chart, self.memory_chart, self.disk_chart, self.network_chart]
@@ -457,20 +476,30 @@ class MainWindow(QMainWindow):
             self.overview_tab.setStyleSheet(overview_style)
 
         nova_style = f"""
-        QLineEdit {{
-            background-color: {colors['background_color']};
-            color: {colors['text_color']};
-            border: 1px solid {colors['border_color']};
-            padding: 8px;
-            border-radius: 4px;
-        }}
-
-        QLineEdit:focus {{
-            border: 2px solid {colors['line']};
-        }}
+            QLineEdit {{
+                background-color: {colors['input_bg']};
+                color: {colors['input_text']};
+                border: 1px solid {colors['border_color']};
+                padding: 8px;
+                border-radius: 4px;
+            }}
+            
+            QLineEdit:focus {{
+                border: 2px solid {colors['focus_border']};
+                background-color: {colors['focus_bg']};
+            }}
+            
+            /* Explicit cursor color */
+            QLineEdit::cursor {{
+                color: {colors['input_text']};
+                width: 2px;
+            }}
+            
+            /* Add subtle animation for focus */
+            QLineEdit {{
+                transition: border 0.3s ease;
+            }}
         """
-
-        self.nova_input.setStyleSheet(nova_style)
         self.nova_status.setStyleSheet(f"""
             QLabel {{
                 color: {colors['text_color']};
@@ -478,6 +507,11 @@ class MainWindow(QMainWindow):
                 font-size: 12px;
             }}
         """)
+        # Apply to Nova components
+        self.nova_conversation.setStyleSheet(nova_style)
+        self.nova_status.setStyleSheet(nova_style)
+        self.nova_status.setObjectName("status_label")
+        self.nova_input.setStyleSheet(nova_style)
 
     def set_dark_mode(self):
         """Switch to dark mode"""
@@ -980,33 +1014,61 @@ class MainWindow(QMainWindow):
         tabs.addTab(processes_widget, "Processes")
         tabs.addTab(self.settings_widget, "Settings")
 
+    # def set_assistant_state(self, state):
+        # """Set the assistant icon based on the current state"""
+        # icon_size = QSize(160, 160)
+
+        # # Increase font-size from 96px to 120px
+        # self.assistant_icon.setStyleSheet("""
+        #     QLabel {
+        #         font-size: 120px;  # Increased size
+        #         qproperty-alignment: AlignCenter;
+        #     }
+        # """)
+        
+        # # Rest of the method remains the same...
+        # icons = {
+        #     "idle": "🤖",
+        #     "listening": "👂",
+        #     "processing": "🔄",
+        #     "speaking": "🔊",
+        #     "error": "❌"
+        # }
+        
+        # icon_color = "#ffffff" if self.dark_button.isChecked() else "#000000"
+        # self.assistant_icon.setStyleSheet(f"color: {icon_color};")
+        # self.assistant_icon.setText(icons.get(state, icons["idle"]))
+        
+        # # If we were using real images:
+        # # self.assistant_icon.setPixmap(QPixmap(f"assets/nova_{state}.png").scaled(icon_size))
+
     def set_assistant_state(self, state):
-        """Set the assistant icon based on the current state"""
+        """Set the assistant icon (animated) based on the current state"""
         icon_size = QSize(160, 160)
 
-        # Increase font-size from 96px to 120px
-        self.assistant_icon.setStyleSheet("""
-            QLabel {
-                font-size: 120px;  # Increased size
-                qproperty-alignment: AlignCenter;
-            }
-        """)
-        
-        # Rest of the method remains the same...
-        icons = {
-            "idle": "🤖",
-            "listening": "👂",
-            "processing": "🔄",
-            "speaking": "🔊",
-            "error": "❌"
-        }
-        
+        # Stop any previous movie
+        if hasattr(self, "_assistant_movie") and self._assistant_movie:
+            self._assistant_movie.stop()
+
+        # Path to your animations
+        path = f"assets/animations/nova_idle.gif"
+
+        # Fallback to idle if file missing
+        if not QPixmap(path).isNull():
+            movie = QMovie(path)
+            movie.setScaledSize(icon_size)
+            self.assistant_icon.setMovie(movie)
+            movie.start()
+            self._assistant_movie = movie
+        else:
+            # Fallback to a static PNG
+            pix = QPixmap(f"assets/animations/nova_idle.png").scaled(icon_size)
+            self.assistant_icon.setPixmap(pix)
+            self._assistant_movie = None
+
+        # Adjust colors if needed (for SVGs or tinted pixmaps)
         icon_color = "#ffffff" if self.dark_button.isChecked() else "#000000"
-        self.assistant_icon.setStyleSheet(f"color: {icon_color};")
-        self.assistant_icon.setText(icons.get(state, icons["idle"]))
-        
-        # If we were using real images:
-        # self.assistant_icon.setPixmap(QPixmap(f"assets/nova_{state}.png").scaled(icon_size))
+        self.assistant_icon.setStyleSheet(f"background: transparent; color: {icon_color};")
 
     def animate_audio_reaction(self, level):
         """Animate the assistant icon based on audio levels (for future implementation)"""
