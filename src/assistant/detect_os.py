@@ -1,5 +1,3 @@
-# filename: detect_os.py
-
 import platform
 
 try:

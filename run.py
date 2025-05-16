@@ -14,7 +14,7 @@ from src.gui.system_tray import SystemMonitorTray
 from src.monitors.system_monitor import SystemMonitor
 from src.monitors.process_monitor import ProcessMonitor
 from src.database.db import preprocess_data
-from src.alert.detect import detect_anomalies
+from src.anomaly.detect import detect_anomalies
 
 def load_config():
     """

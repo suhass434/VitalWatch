@@ -22,7 +22,16 @@ STYLE_SHEET = {
         'input_bg': '#3c3c3c',
         'input_text': '#ffffff',
         'focus_border': '#4a9cff',
-        'focus_bg': '#353535'
+        'focus_bg': '#353535',
+        'anomaly_status_bg': '#7f8c8d',
+        'nova_conversation_bg': '#2d2d2d',
+        'nova_conversation_border': '#3c3c3c',
+        'anomaly_detected_bg': '#e74c3c',
+        'system_normal_bg': '#2ecc71',
+        'history_date_bg': '#3c3c3c',
+        'history_date_text': '#c8c8c8',
+        'user_message': '#4e9af1',
+        'assistant_message': '#2e7d32'
     },
     "light": {
         "background_color": "#FFFFFF",
@@ -47,6 +56,15 @@ STYLE_SHEET = {
         'input_bg': '#ffffff',
         'input_text': '#000000',
         'focus_border': '#0066cc',
-        'focus_bg': '#f0f0f0' 
+        'focus_bg': '#f0f0f0',
+        'anomaly_status_bg': '#b0bec5',
+        'nova_conversation_bg': '#f5f5f5',
+        'nova_conversation_border': '#cccccc',
+        'anomaly_detected_bg': '#ef5350',
+        'system_normal_bg': '#66bb6a',
+        'history_date_bg': '#eeeeee',
+        'history_date_text': '#616161',
+        'user_message': '#2196F3',
+        'assistant_message': '#4CAF50'
     }
 }
