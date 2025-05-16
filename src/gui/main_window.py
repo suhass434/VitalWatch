@@ -1043,6 +1043,10 @@ class MainWindow(QMainWindow):
         # # self.assistant_icon.setPixmap(QPixmap(f"assets/nova_{state}.png").scaled(icon_size))
 
     def set_assistant_state(self, state):
+        if getattr(self, "_assistant_state_set", False):
+            return  # Already set, don't run again
+        self._assistant_state_set = True  # Mark as run
+        
         """Set the assistant icon (animated) based on the current state"""
         icon_size = QSize(160, 160)
 
