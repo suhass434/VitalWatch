@@ -1,14 +1,19 @@
-# Import necessary standard and third-party libraries
 import sys
 import os
 import time
 import yaml
 import pandas as pd
-from threading import Thread
+import logging
+import signal
+import atexit
+from threading import Thread, Event
+from typing import Dict, Any, Optional
 from PyQt5.QtWidgets import QApplication
 from PyQt5.QtGui import QIcon
-import signal
-# Import internal modules for GUI and monitoring tasks
+from PyQt5.QtCore import QTimer, QObject, pyqtSignal, Qt
+from PyQt5.QtCore import QMetaObject, Q_ARG
+
+# Import internal modules
 from src.gui.main_window import MainWindow
 from src.gui.system_tray import SystemMonitorTray
 from src.monitors.system_monitor import SystemMonitor
@@ -16,137 +21,330 @@ from src.monitors.process_monitor import ProcessMonitor
 from src.database.db import preprocess_data
 from src.anomaly.detect import detect_anomalies
 
-def load_config():
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger(__name__)
+
+def get_resource_path(relative_path: str) -> str:
+    """Get the absolute path to bundled files when using PyInstaller."""
+    if getattr(sys, 'frozen', False):
+        base_path = sys._MEIPASS
+    else:
+        base_path = os.path.abspath(".")
+    return os.path.join(base_path, relative_path)
+
+def load_config() -> Dict[str, Any]:
     """
     Load configuration settings from a YAML file.
     
     Returns:
-        dict: Parsed YAML configuration data.
+        Parsed YAML configuration data.
+        
+    Raises:
+        FileNotFoundError: If config file doesn't exist
+        yaml.YAMLError: If config file is invalid
     """
-    config_path = 'config/config.yaml'
-    with open(config_path, 'r') as file:
-        return yaml.safe_load(file)
+    config_path = get_resource_path('config/config.yaml')
+    try:
+        with open(config_path, 'r') as file:
+            config = yaml.safe_load(file)
+            logger.info(f"Configuration loaded from {config_path}")
+            return config
+    except FileNotFoundError:
+        logger.error(f"Configuration file not found: {config_path}")
+        raise
+    except yaml.YAMLError as e:
+        logger.error(f"Invalid YAML configuration: {e}")
+        raise
 
-THRESHOLD_STEP = load_config()['monitoring']['anomaly_detection_interval']
-# Define paths
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-ALERT_DIR = os.path.join(BASE_DIR, "src", "data")
-OUTPUT_CSV = os.path.join(ALERT_DIR, 'preprocess_data.csv')
-
-# Ensure alert directory exists
-os.makedirs(ALERT_DIR, exist_ok=True)
-
-def manage_csv_size(output_file, max_rows):
+def manage_csv_size(output_file: str, max_rows: int) -> int:
     """
-    Ensures the CSV file does not exceed the specified number of rows.
-
+    Efficiently manages CSV file size without loading entire file.
+    
     Args:
-        output_file (str): Path to the CSV file.
-        max_rows (int): Maximum number of rows allowed in the CSV file.
+        output_file: Path to the CSV file
+        max_rows: Maximum number of rows allowed
+        
+    Returns:
+        Number of rows in the file
     """
-    if os.path.exists(output_file):
-        df = pd.read_csv(output_file)
-        if len(df) > max_rows:
-            df = df.iloc[-max_rows:]  # Keep only the last `max_rows` rows
+    if not os.path.exists(output_file):
+        return 0
+    
+    try:
+        # Use efficient line counting instead of loading all data
+        with open(output_file, 'r') as f:
+            row_count = sum(1 for line in f) - 1  # Subtract header
+        
+        if row_count > max_rows:
+            # Read only the required number of lines
+            df = pd.read_csv(output_file, skiprows=range(1, row_count - max_rows + 1))
             df.to_csv(output_file, index=False)
-        return len(df)
-    return 0
+            logger.info(f"Trimmed CSV to {max_rows} rows")
+            return max_rows
+        
+        return row_count
+        
+    except Exception as e:
+        logger.error(f"Error managing CSV size: {e}")
+        return 0
 
-def data_collection_task(config, stopping_event):
-    system_monitor = SystemMonitor()
-
-    while not stopping_event.is_set():
-        try:
-            # Collect metrics
-            metrics = [system_monitor.collect_metrics()]
-            preprocess_data(metrics, OUTPUT_CSV)
-
-            # Manage CSV size
-            manage_csv_size(OUTPUT_CSV, THRESHOLD_STEP)  
-            
-            # Wait before collecting the next data point
-            time.sleep(config['monitoring']['interval'])
-
-        except Exception as e:
-            print(f"Error in data collection task: {e}")
-            time.sleep(config['monitoring']['interval'])
-
-def anomaly_detection_task(config, stopping_event, main_window):
-    """Background task to detect anomalies and update the UI"""
-    iteration_count = 0
-
-    while not stopping_event.is_set():
-        try:
-            iteration_count += 1
-            
-            if iteration_count >= THRESHOLD_STEP:
-                print("It's time to run a system check and detect any anomalies!")
-                # Detect anomalies and update UI
-                anomalies = detect_anomalies(OUTPUT_CSV, THRESHOLD_STEP)
-                main_window.update_anomaly_table(anomalies)
-                iteration_count = 0  # Reset counter
+class VitalWatchApp(QObject):  # Inherit from QObject to use signals
+    """Main application class that manages all components."""
+    
+    # Add these signals for thread-safe GUI communication
+    metrics_updated = pyqtSignal(dict)
+    processes_updated = pyqtSignal(list)
+    anomalies_updated = pyqtSignal(list)
+    
+    def __init__(self):
+        super().__init__()  # Initialize QObject parent
+        """Initialize the VitalWatch application."""
+        self.config = load_config()
+        self.stopping_event = Event()
+        self.threads = []
+        self.app: Optional[QApplication] = None
+        self.main_window: Optional[MainWindow] = None
+        self.tray: Optional[SystemMonitorTray] = None
+        
+        # Setup paths
+        self.threshold_step = self.config['monitoring']['anomaly_detection_interval']
+        self.alert_dir = get_resource_path("src/data")
+        self.output_csv = os.path.join(self.alert_dir, 'preprocess_data.csv')
+        
+        # Ensure directory exists
+        os.makedirs(self.alert_dir, exist_ok=True)
+        
+        # Register cleanup handlers
+        atexit.register(self.cleanup)
+        signal.signal(signal.SIGINT, self._signal_handler)
+        signal.signal(signal.SIGTERM, self._signal_handler)
+    
+    def _signal_handler(self, signum, frame):
+        """Handle system signals for graceful shutdown."""
+        logger.info(f"Received signal {signum}, initiating shutdown...")
+        self.stop()
+    
+    def data_collection_task(self) -> None:
+        """Background task for collecting system metrics."""
+        system_monitor = SystemMonitor()
+        logger.info("Data collection task started")
+        
+        while not self.stopping_event.is_set():
+            try:
+                # Collect metrics
+                metrics = [system_monitor.collect_metrics()]
+                preprocess_data(metrics, self.output_csv)
                 
-            time.sleep(config['monitoring']['interval'])
+                # Manage CSV size
+                manage_csv_size(self.output_csv, self.threshold_step)
+                
+                # Use event-based waiting instead of blocking sleep
+                if self.stopping_event.wait(timeout=self.config['monitoring']['interval']):
+                    break
+                    
+            except Exception as e:
+                logger.error(f"Error in data collection: {e}")
+                if self.stopping_event.wait(timeout=self.config['monitoring']['interval']):
+                    break
+        
+        logger.info("Data collection task stopped")
+    
+    def anomaly_detection_task(self) -> None:
+        """Background task for periodic anomaly detection."""
+        iteration_count = 0
+        logger.info("Anomaly detection task started")
 
-        except Exception as e:
-            print(f"Error in anomaly detection task: {e}")
-            time.sleep(config['monitoring']['interval'])
+        while not self.stopping_event.is_set():
+            # Replace the anomaly detection block:
+            try:
+                iteration_count += 1
+                if iteration_count >= self.threshold_step:
+                    logger.info("Executing anomaly detection cycle")
+                    anomalies = detect_anomalies(self.output_csv, self.threshold_step)
+                    
+                    # Ensure consistent data type emission
+                    if anomalies is not None and hasattr(anomalies, 'empty') and not anomalies.empty:
+                        # Convert DataFrame to list of dictionaries
+                        anomaly_list = anomalies.to_dict('records')
+                        # Emit using QMetaObject for thread safety
+                        QMetaObject.invokeMethod(
+                            self, "anomalies_updated", 
+                            Qt.QueuedConnection,
+                            Q_ARG(list, anomaly_list)
+                        )
+                        logger.info(f"Detected {len(anomalies)} anomalies")
+                    else:
+                        # Always emit empty list
+                        QMetaObject.invokeMethod(
+                            self, "anomalies_updated", 
+                            Qt.QueuedConnection,
+                            Q_ARG(list, [])
+                        )
+                        logger.debug("No anomalies detected")
+                    iteration_count = 0
+            except Exception as e:
+                logger.error(f"Anomaly detection failed: {e}", exc_info=True)
+                # Always emit a list on error
+                self.anomalies_updated.emit([])
 
-def monitoring_task(main_window, config, stopping_event):
-    """
-    Background task to monitor system metrics and update the GUI.
+    def monitoring_task(self) -> None:
+        """Background task for monitoring system metrics and updating GUI."""
+        system_monitor = SystemMonitor()
+        process_monitor = ProcessMonitor()
+        logger.info("Monitoring task started")
+        
+        while not self.stopping_event.is_set():
+            try:
+                # Collect system metrics
+                metrics = system_monitor.collect_metrics()
+                # Emit signal instead of direct GUI update
+                self.metrics_updated.emit(metrics)
+                
+                # Short wait before process update
+                if self.stopping_event.wait(timeout=self.config['monitoring']['interval'] / 2):
+                    break
+                
+                # Collect process data
+                processes = process_monitor.monitor_processes()
+                # Emit signal instead of direct GUI update
+                self.processes_updated.emit(processes)
+                
+                # Wait for remaining interval
+                if self.stopping_event.wait(timeout=self.config['monitoring']['interval'] / 2):
+                    break
+                    
+            except Exception as e:
+                logger.error(f"Error in monitoring: {e}")
+                if self.stopping_event.wait(timeout=self.config['monitoring']['interval']):
+                    break
+        
+        logger.info("Monitoring task stopped")
+    
+    def start_background_tasks(self) -> None:
+        """Start all background monitoring tasks."""
+        tasks = [
+            ("monitoring", self.monitoring_task),
+            ("data_collection", self.data_collection_task),
+            ("anomaly_detection", self.anomaly_detection_task)
+        ]
+        
+        for name, target in tasks:
+            thread = Thread(target=target, name=name, daemon=True)
+            thread.start()
+            self.threads.append(thread)
+            logger.info(f"Started {name} thread")
+    
+    def setup_gui(self) -> None:
+        """Initialize the GUI components."""
+        self.app = QApplication(sys.argv)
+        
+        # Prevent app from quitting when main window closes
+        self.app.setQuitOnLastWindowClosed(False)
+        
+        # Set application icon
+        icon_path = get_resource_path('src/icons/icon.png')
+        if os.path.exists(icon_path):
+            self.app.setWindowIcon(QIcon(icon_path))
+        
+        # Setup main window
+        self.main_window = MainWindow()
+        self.main_window.show()
+        
+        # Connect signals to main window slots with thread-safe connections
+        self.metrics_updated.connect(self.main_window.update_metrics, Qt.QueuedConnection)
+        self.processes_updated.connect(self.main_window.update_process_table, Qt.QueuedConnection)
+        if hasattr(self.main_window, 'update_anomaly_table'):
+            self.anomalies_updated.connect(self.main_window.update_anomaly_table, Qt.QueuedConnection)
+        else:
+            logger.error("MainWindow does not have update_anomaly_table method")
+        
+        # Connect main window close event to our handler
+        self.main_window.app_close_requested = self.handle_window_close
+        
+        # Setup system tray with proper callbacks
+        self.tray = SystemMonitorTray(self.main_window)
+        self.tray.set_restore_callback(self.show_from_tray)
+        
+        logger.info("GUI components initialized with thread-safe signal connections")
 
-    Args:
-        main_window (MainWindow): Reference to the main GUI window for updating metrics.
-        config (dict): Configuration settings for monitoring.
-    """
-    system_monitor = SystemMonitor()
-    process_monitor = ProcessMonitor()
+    def handle_window_close(self, should_minimize: bool) -> None:
+        """Handle window close event from main window"""
+        if should_minimize:
+            # Hide to system tray
+            self.main_window.hide()
+            self.tray.show_notification(
+                "VitalWatch",
+                "Application minimized to system tray. Double-click tray icon to restore.",
+                3000
+            )
+            logger.info("Application minimized to system tray")
+        else:
+            # Complete shutdown
+            self.stop()
 
-    while not stopping_event.is_set():
+    def show_from_tray(self) -> None:
+        """Show main window from system tray"""
+        if self.main_window:
+            self.main_window.show()
+            self.main_window.raise_()
+            self.main_window.activateWindow()
+            logger.info("Main window restored from system tray")
+
+    def run(self) -> int:
+        """Start the application."""
         try:
-            metrics = system_monitor.collect_metrics()
-            main_window.update_metrics(metrics)
-            time.sleep(config['monitoring']['interval'])
-            processes = process_monitor.monitor_processes()
-            main_window.update_process_table(processes)
-            time.sleep(config['monitoring']['interval'])
-
+            logger.info("Starting VitalWatch application...")
+            
+            # Setup GUI
+            self.setup_gui()
+            
+            # Start background tasks
+            self.start_background_tasks()
+            
+            # Run the Qt event loop
+            exit_code = self.app.exec_()
+            
+            logger.info(f"Application exited with code {exit_code}")
+            return exit_code
+            
         except Exception as e:
-            print(f"Error in system monitoring: {e}")
-            time.sleep(config['monitoring']['interval'])
-            print(f"Error in process monitoring: {e}")
-            time.sleep(config['monitoring']['interval'])
-
-def main():
-    """
-    Main function to initialize and start the application.
-    """
-    # Load configuration data
-    config = load_config()
+            logger.error(f"Failed to start application: {e}")
+            return 1
+        finally:
+            self.cleanup()
     
-    # Initialize Qt application
-    app = QApplication(sys.argv)
-    icon_path = os.path.join(os.path.dirname(__file__), 'src/icons/icon.png')
-    app.setWindowIcon(QIcon(icon_path))
+    def stop(self) -> None:
+        """Stop all background tasks and cleanup."""
+        logger.info("Stopping application...")
+        self.stopping_event.set()
+        
+        if self.app:
+            self.app.quit()
     
-    # Setup main window and system tray icon
-    main_window = MainWindow()
-    main_window.show()
-    tray = SystemMonitorTray(main_window)
-    
-    # Start monitoring tasks in separate threads
-    monitoring_thread = Thread(target=monitoring_task, args=(main_window, config, tray.stopping), daemon=True)
-    data_collection_thread = Thread(target=data_collection_task, args=(config, tray.stopping), daemon=True)
-    anomaly_detection_thread = Thread(target=anomaly_detection_task, args=(config, tray.stopping, main_window), daemon=True)
+    def cleanup(self) -> None:
+        """Cleanup resources and wait for threads to finish."""
+        if self.stopping_event.is_set():
+            return  # Already cleaning up
+        
+        self.stopping_event.set()
+        
+        # Wait for all threads to finish
+        for thread in self.threads:
+            if thread.is_alive():
+                thread.join(timeout=2.0)
+                if thread.is_alive():
+                    logger.warning(f"Thread {thread.name} did not stop gracefully")
+        
+        logger.info("Cleanup completed")
 
-    monitoring_thread.start()
-    data_collection_thread.start()
-    anomaly_detection_thread.start()
-
-    # Run the Qt application event loop and handle application exit
-    exit_code = app.exec_()
-    sys.exit(exit_code)
+def main() -> int:
+    """Main entry point for the application."""
+    app = VitalWatchApp()
+    return app.run()
 
 if __name__ == '__main__':
-    main()
+    sys.exit(main())

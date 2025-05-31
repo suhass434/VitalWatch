@@ -50,7 +50,7 @@ async def process_user_input(user_text, os_distro):
     if cmd["type"] == "command":
         if USE_SAFE_FLAG and not is_safe(cmd):
             print("Blocked unsafe command.")
-            log_interaction(user_text, raw, cmd, "blocked_unsafe")
+            #log_interaction(user_text, raw, cmd, "blocked_unsafe")
             return None
 
         if FORCE_CONFIRM:
@@ -58,7 +58,7 @@ async def process_user_input(user_text, os_distro):
             ans = (await ainput(prompt)).strip().lower()
             if ans != "y":
                 print("Canceled by user.")
-                log_interaction(user_text, raw, cmd, "canceled")
+                #log_interaction(user_text, raw, cmd, "canceled")
                 return None
 
         try:
@@ -75,7 +75,7 @@ async def process_user_input(user_text, os_distro):
             result = str(e)
             print("✖ Execution failed:", e)
 
-        log_interaction(user_text, raw, cmd, result)
+        #log_interaction(user_text, raw, cmd, result)
 
         return None
 
@@ -83,7 +83,7 @@ async def process_user_input(user_text, os_distro):
         print(cmd["response"])
         if VOICE_MODE:
             await speak(cmd["response"])
-        log_interaction(user_text, raw, cmd, "spoken")
+        #log_interaction(user_text, raw, cmd, "spoken")
         return None
 
 async def main_loop():
@@ -101,7 +101,7 @@ async def main_loop():
             await speak("Voice command mode activated. Say stop to exit.")
             print("Voice command mode. Speak your commands. Say 'stop' to exit.")
             with sr.Microphone() as mic:
-                recognizer.adjust_for_ambient_noise(mic)
+                recognizer.adjust_for_ambient_noise(mic, duration=1)
                 while True:
                     command = listen_voice(recognizer, mic)
                     if not command:

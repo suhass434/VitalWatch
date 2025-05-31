@@ -1,57 +1,100 @@
-from PyQt5.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, QTabWidget, QPushButton, QLabel, QTableWidget, QTableWidgetItem,
-                             QHeaderView, QGroupBox, QCheckBox, QButtonGroup, QRadioButton, QApplication, QGraphicsRectItem, QGraphicsDropShadowEffect, QLineEdit)
-from PyQt5.QtWidgets import (QTextEdit, QDialog, QListWidget, QListWidgetItem,
-                            QMessageBox, QVBoxLayout, QHBoxLayout)
-from PyQt5.QtCore import Qt, QSize, QThread, QTimer
-from PyQt5.QtGui import QColor, QMovie, QPixmap
-from PyQt5.QtChart import QChart, QChartView, QLineSeries, QValueAxis
-from PyQt5.QtCore import Qt, pyqtSignal, QObject
-from PyQt5.QtGui import QColor, QBrush, QPen, QFont, QPainter
-from src.gui.styleSheet import STYLE_SHEET
-import yaml
-import sys
-import pandas as pd
-import time
-import edge_tts
-import tempfile
+import asyncio
 import os
-import asyncio
-import platform
-import distro
+import sys
+import tempfile
 import threading
-import asyncio
-import speech_recognition as sr
+import time
+from typing import Dict, Any, Optional, List
+import yaml
+import pandas as pd
+import edge_tts
+
+from PyQt5.QtWidgets import (
+    QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, 
+    QTabWidget, QPushButton, QLabel, QTableWidget, QTableWidgetItem, 
+    QHeaderView, QGroupBox, QCheckBox, QButtonGroup, QRadioButton, 
+    QApplication, QGraphicsOpacityEffect, QLineEdit, QTextEdit, 
+    QDialog, QListWidget, QListWidgetItem, QMessageBox, QSystemTrayIcon,
+    QMenu, QAction
+)
+
+from PyQt5.QtCore import Qt, QSize, QThread, QTimer, pyqtSignal, QObject
+from PyQt5.QtGui import QColor, QMovie, QPixmap, QBrush, QPen, QFont, QPainter, QIcon
+from PyQt5.QtChart import QChart, QChartView, QLineSeries, QValueAxis
+
+from src.gui.styleSheet import STYLE_SHEET
 from src.assistant.detect_os import get_os_distro
 from src.anomaly.detect import detect_anomalies
-from src.assistant.main import main_loop as assistant_main_loop
 from src.assistant.llm_client import query_llm, summarize_output
 from src.assistant.parser import parse_response
 from src.assistant.executor import is_safe, execute
 import src.assistant.config
+from src.gui.system_tray import SystemMonitorTray
 
-def load_config():
+def get_resource_path(relative_path: str) -> str:
+    """Get the absolute path to bundled files when using PyInstaller."""
+    if getattr(sys, 'frozen', False):
+        base_path = sys._MEIPASS
+    else:
+        base_path = os.path.abspath(".")
+    return os.path.join(base_path, relative_path)
+
+
+def load_config() -> Dict[str, Any]:
     """
     Load configuration settings from a YAML file.
-
+    
     Returns:
-        dict: Parsed YAML configuration data.
+        Parsed YAML configuration data
     """
-    config_path = 'config/config.yaml'
+    config_path = get_resource_path('config/config.yaml')
     with open(config_path, 'r') as file:
         return yaml.safe_load(file)
 
-THRESHOLD_STEP = load_config()['monitoring']['anomaly_detection_interval']
-OUTPUT_CSV = "src/data/preprocess_data.csv"
 
-class CommandExecutor(QObject):
-    command_finished = pyqtSignal(str, str, str, str)  # Add user_query and os_distro
-
-    def execute_command(self, user_query, command, os_distro):  # Add parameters
+class TTSWorker(QObject):
+    """Worker for non-blocking text-to-speech"""
+    finished = pyqtSignal()
+    error = pyqtSignal(str)
+    
+    def __init__(self, text: str, voice: str = "en-US-AriaNeural"):
+        super().__init__()
+        self.text = text
+        self.voice = voice
+    
+    async def speak_async(self) -> None:
+        """Convert text to speech asynchronously"""
         try:
-            result = execute(command)
-            self.command_finished.emit(user_query, command["target"], result, os_distro)
+            communicate = edge_tts.Communicate(self.text, self.voice)
+            tmp_audio = tempfile.NamedTemporaryFile(delete=False, suffix=".mp3")
+            await communicate.save(tmp_audio.name)
+            
+            # Use non-blocking subprocess instead of os.system
+            import subprocess
+            process = subprocess.Popen(
+                ['play', tmp_audio.name],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL
+            )
+            
+            # Wait for audio to finish without blocking
+            while process.poll() is None:
+                await asyncio.sleep(0.1)
+            
+            # Cleanup
+            try:
+                os.unlink(tmp_audio.name)
+            except OSError:
+                pass
+                
+            self.finished.emit()
+            
         except Exception as e:
-            self.command_finished.emit(user_query, command["target"], str(e), os_distro)
+            self.error.emit(str(e))
+    
+    def run(self) -> None:
+        """Run the async TTS in a thread"""
+        asyncio.run(self.speak_async())
 
 class NovaWorker(QObject):
     """Worker class for Nova assistant commands"""
@@ -61,20 +104,28 @@ class NovaWorker(QObject):
     speak_signal = pyqtSignal(str)
     finished = pyqtSignal()
     confirmation_needed = pyqtSignal(dict, str, str)
-    def __init__(self, user_input, os_distro):
+    # ADD THIS NEW SIGNAL:
+    execute_command_signal = pyqtSignal(dict)
+
+    def __init__(self, user_input: str, os_distro: str, use_safe_flag: bool, force_confirm: bool):
         super().__init__()
         self.user_input = user_input
-        self.os_distro = get_os_distro()
+        self.os_distro = os_distro
+        self.USE_SAFE_FLAG = use_safe_flag
+        self.FORCE_CONFIRM = force_confirm
+        
+        # Connect the execute signal to the method
+        self.execute_command_signal.connect(self._execute_command)
 
-    def process_command(self):
-        # Update status via signal
+    def process_command(self) -> None:
+        """Process user command without blocking the UI"""
         self.status_update.emit("Processing your request...")
         self.state_update.emit("processing")
-
+        
         try:
             # Query LLM
             raw = query_llm(self.user_input, self.os_distro)
-
+            
             # Parse response
             try:
                 cmd = parse_response(raw)
@@ -88,136 +139,838 @@ class NovaWorker(QObject):
 
             # Handle command or conversation
             if cmd["type"] == "command":
-                if src.assistant.config.USE_SAFE_FLAG and not is_safe(cmd):
-                    response = "Sorry, that command is not allowed for security reasons."
-                    self.message_update.emit("Nova", response)
-                    self.speak_signal.emit(response)
-                    self.state_update.emit("error")
-                    self.finished.emit()
-                    return
-
-                # For commands requiring confirmation, send a signal back
-                if src.assistant.config.FORCE_CONFIRM:
-                    self.status_update.emit("Waiting for confirmation...")
-                    self.state_update.emit("idle")
-                    self.confirmation_needed.emit(cmd, self.os_distro, self.user_input)
-                    return
-
-                # Execute command
-                try:
-                    result = execute(cmd)
-
-                    # Summarize result
-                    if result:
-                        summary = summarize_output(user_query=self.user_input, command=cmd["target"], output=result, os_distro=self.os_distro)
-                        self.message_update.emit("Nova", summary)
-                        self.state_update.emit("speaking")
-                        self.speak_signal.emit(summary)
-                    else:
-                        response = "Command executed successfully."
-                        self.message_update.emit("Nova", response)
-                        self.state_update.emit("speaking")
-                        self.speak_signal.emit(response)
-                except Exception as e:
-                    response = f"Error executing command: {e}"
-                    self.message_update.emit("Nova", response)
-                    self.state_update.emit("error")
-                    self.speak_signal.emit(response)
-
+                self._handle_command(cmd)
             elif cmd["type"] == "conversation":
-                self.message_update.emit("Nova", cmd["response"])
-                self.state_update.emit("speaking")
-                self.speak_signal.emit(cmd["response"])
-
+                self._handle_conversation(cmd)
+                
         except Exception as e:
             response = f"An error occurred: {e}"
             self.message_update.emit("Nova", response)
             self.state_update.emit("error")
             self.speak_signal.emit(response)
-
         finally:
             self.status_update.emit("Nova is ready. Type a command or question.")
+            # DON'T emit finished here for confirmation commands
+            if not self.FORCE_CONFIRM:
+                self.finished.emit()
+    
+    def _handle_command(self, cmd: Dict[str, Any]) -> None:
+        """Handle command execution"""
+        if self.USE_SAFE_FLAG and not is_safe(cmd):
+            response = "Sorry, that command is not allowed for security reasons."
+            self.message_update.emit("Nova", response)
+            self.speak_signal.emit(response)
+            self.state_update.emit("error")
+            self.finished.emit()
+            return
+
+        if self.FORCE_CONFIRM:
+            self.status_update.emit("Waiting for confirmation...")
+            self.state_update.emit("idle")
+            self.confirmation_needed.emit(cmd, self.os_distro, self.user_input)
+            return
+
+        self._execute_command(cmd)
+    
+    def _handle_conversation(self, cmd: Dict[str, Any]) -> None:
+        """Handle conversation response"""
+        self.message_update.emit("Nova", cmd["response"])
+        self.state_update.emit("speaking")
+        self.speak_signal.emit(cmd["response"])
+        self.finished.emit()
+    
+    def _execute_command(self, cmd: Dict[str, Any]) -> None:
+        """Execute the actual command"""
+        try:
+            result = execute(cmd)
+            if result:
+                summary = summarize_output(
+                    user_query=self.user_input,
+                    command=cmd["target"],
+                    output=result,
+                    os_distro=self.os_distro
+                )
+                self.message_update.emit("Nova", summary)
+                self.state_update.emit("speaking")
+                self.speak_signal.emit(summary)
+            else:
+                response = "Command executed successfully."
+                self.message_update.emit("Nova", response)
+                self.state_update.emit("speaking")
+                self.speak_signal.emit(response)
+        except Exception as e:
+            response = f"Error executing command: {e}"
+            self.message_update.emit("Nova", response)
+            self.state_update.emit("error")
+            self.speak_signal.emit(response)
+        finally:
             self.finished.emit()
 
 class MainWindow(QMainWindow):
+    """Main application window for VitalWatch"""
+    
     def __init__(self):
         super().__init__()
+        self.config = load_config()
+        self._init_properties()
+        self._init_ui_components()
+        self.setup_ui()
+        self._setup_timers()
 
-        #font
-        self.font_size = 10
-        self.font = QFont()
-        self.font.setFamily("Arial")
-        self.font.setPointSize(self.font_size)
-        self.app = QApplication(sys.argv)
-        self.app.setFont(self.font)
+    def _init_properties(self) -> None:
+        """Initialize window properties"""
+        self.font_size = 13
+        self.font = QFont("Arial", self.font_size)
+        self.setFont(self.font)
+        
+        # State variables
+        self.VOICE_MODE = False
+        self.is_speaking = False
+        self.speech_event = threading.Event()
+        self.speech_event.set()
+        
+        # Configuration
+        self.os_distro = get_os_distro()
+        self.USE_SAFE_FLAG = True
+        self.FORCE_CONFIRM = True
+        
+        # Data tracking
+        self.current_processes: List[Dict[str, Any]] = []
+        self.data_points = 0
+        self.max_data_points = 50
+        self.show_all_processes = False
 
-        #overview label initialization
-        self.cpu_percent = QLabel("Cpu Usage: --")
-        self.current_processes = []
+        # Anomaly detection configuration
+        self.THRESHOLD_STEP = self.config['monitoring']['anomaly_detection_interval']
+        self.OUTPUT_CSV = get_resource_path("src/data/preprocess_data.csv")
+    
+        # Add this line for chat history
+        self.chat_history = []
+
+        os.makedirs(os.path.dirname(self.OUTPUT_CSV), exist_ok=True)
+
+    def _init_ui_components(self) -> None:
+        """Initialize UI components"""
+        # Labels
+        self.cpu_percent = QLabel("CPU Usage: --")
         self.memory_label = QLabel("Memory Usage: --")
         self.disk_label = QLabel("Disk Usage: --")
         self.network_label = QLabel("Network Usage: --")
-
-        # Initialize data series for graphs
+        
+        # Chart series
         self.cpu_series = QLineSeries()
         self.memory_series = QLineSeries()
         self.disk_series = QLineSeries()
-        self.network_series = QLineSeries()
-        self.data_points = 0
-        self.max_data_points = 50
-
-        # Create charts
+        self.network_upload_series = QLineSeries()
+        self.network_download_series = QLineSeries()
+        
+        # Charts
         self.cpu_chart = QChart()
         self.memory_chart = QChart()
         self.disk_chart = QChart()
         self.network_chart = QChart()
-        #self.cpu_temp_chart = QChart()
+    
+    def _setup_timers(self) -> None:
+        """Setup non-blocking timers - minimal diagnostic checks only"""
+        # Only UI update timer if needed for diagnostics
+        self.ui_timer = QTimer()
+        self.ui_timer.timeout.connect(self._periodic_ui_update)
+        self.ui_timer.start(10000)  # Every 10 seconds for basic health checks
 
-        #initialisations
-        self.VOICE_MODE = False
-        self.is_speaking = False
-        self.speech_event = threading.Event()
-        self.speech_event.set()  # Initially not speaking
-        self.os_distro = get_os_distro()
+    def _periodic_ui_update(self) -> None:
+        """Minimal periodic update - just health checks"""
+        try:
+            # Just basic health checks
+            if hasattr(self, 'nova_thread') and self.nova_thread and not self.nova_thread.isRunning():
+                if hasattr(self, 'nova_status'):
+                    self.nova_status.setText("Nova is ready. Type a command or question.")
+                self.set_assistant_state("idle")
+        except Exception as e:
+            print(f"Error in periodic update: {e}")
 
-        self.setup_ui()
+    def setup_assistant_animation(self) -> None:
+        """Set up the assistant animation once - runs continuously"""
+        try:
+            gif_path = get_resource_path("assets/animations/nova_idle.gif")
+            
+            if os.path.exists(gif_path):
+                movie = QMovie(gif_path)
+                movie.setScaledSize(QSize(160, 160))
+                movie.start()
+                
+                if hasattr(self, 'assistant_icon'):
+                    self.assistant_icon.setMovie(movie)
+                    self._assistant_movie = movie
+                    print("Assistant animation loaded successfully")
+            else:
+                print(f"Animation file not found: {gif_path}")
+                if hasattr(self, 'assistant_icon'):
+                    self.assistant_icon.setText("Nova")
+                    
+        except Exception as e:
+            print(f"Error loading assistant animation: {e}")
+            if hasattr(self, 'assistant_icon'):
+                self.assistant_icon.setText("Nova")
 
-    def set_theme(self, mode='dark'):
+    def run_anomaly_detection(self) -> None:
+        """Run anomaly detection manually"""
+        try:
+            self.anomaly_status.setText("Running anomaly detection...")
+            self.detect_button.setEnabled(False)
+            
+            # Simulate detection (replace with actual detection logic)
+            anomalies = detect_anomalies(self.OUTPUT_CSV, self.THRESHOLD_STEP)
+            
+            if anomalies is not None :
+                self.update_anomaly_table(anomalies)
+                self.anomaly_status.setText(f"Detection complete. Found {len(anomalies)} anomalies.")
+            else:
+                self.anomaly_status.setText("Detection complete. No anomalies found.")
+            
+            # Update last run time
+            current_time = time.strftime("%Y-%m-%d %H:%M:%S")
+            self.last_run_time.setText(f"Last run: {current_time}")
+            
+        except Exception as e:
+            self.anomaly_status.setText(f"Detection failed: {e}")
+        finally:
+            self.detect_button.setEnabled(True)
+
+    def set_dark_mode(self) -> None:
+        """Set dark mode theme"""
+        if hasattr(self, 'dark_button') and self.dark_button.isChecked():
+            self.set_theme('dark')
+
+    def set_light_mode(self) -> None:
+        """Set light mode theme"""
+        if hasattr(self, 'light_button') and self.light_button.isChecked():
+            self.set_theme('light')
+
+    def load_config(self) -> Dict[str, Any]:
+        """Load configuration - wrapper for module function"""
+        return load_config()
+
+    def speak_text(self, text: str) -> None:
+        """
+        Non-blocking text-to-speech functionality.
+        """
+        if not self.VOICE_MODE:
+            return
+
+        # Clean up previous TTS thread properly
+        if hasattr(self, 'tts_thread') and self.tts_thread:
+            if self.tts_thread.isRunning():
+                self.tts_thread.quit()
+                self.tts_thread.wait(2000)  # Increased timeout
+            self.tts_thread = None  # Clear reference
+            self.tts_worker = None  # Clear reference
+
+        # Clean up previous TTS thread if exists
+        if hasattr(self, 'tts_thread') and self.tts_thread is not None:
+            try:
+                if self.tts_thread.isRunning():
+                    self.tts_thread.quit()
+                    self.tts_thread.wait(1000)
+            except RuntimeError:
+                pass
+            finally:
+                self.tts_thread = None
+                self.tts_worker = None
+
+        # Create TTS worker and thread
+        self.tts_thread = QThread()
+        self.tts_worker = TTSWorker(text)
+        self.tts_worker.moveToThread(self.tts_thread)
+
+        # Connect signals
+        self.tts_worker.finished.connect(self._on_tts_finished, Qt.QueuedConnection)
+        self.tts_worker.error.connect(lambda e: print(f"TTS Error: {e}"), Qt.QueuedConnection)
+
+        # Start TTS
+        self.tts_thread.started.connect(self.tts_worker.run)
+        self.tts_thread.start()
+
+    def _on_tts_finished(self) -> None:
+        """ 
+        Called when TTS finishes.
+        """
+        self._cleanup_tts_thread()
+
+    def toggle_voice_mode(self, enable: bool) -> None:
+        """
+        Toggle voice output mode for text-to-speech functionality
+        """
+        self.VOICE_MODE = enable
+
+        if enable:
+            if hasattr(self, 'nova_status'):
+                self.nova_status.setText("Text-to-speech enabled")
+            self.add_nova_message("System", "Voice commands coming soon. Text-to-speech works now!")
+        else:
+            if hasattr(self, 'nova_status'):
+                self.nova_status.setText("Voice mode disabled")
+
+    def _cleanup_tts_thread(self) -> None:
+        """Safely cleanup TTS thread and worker"""
+        if hasattr(self, 'tts_thread') and self.tts_thread is not None:
+            try:
+                self.tts_thread.quit()
+                self.tts_thread.wait(2000)
+            except RuntimeError:
+                # Object already deleted
+                pass
+            finally:
+                self.tts_thread = None
+        
+        if hasattr(self, 'tts_worker'):
+            self.tts_worker = None
+
+    def send_nova_command(self) -> None:
+        """Send a command to Nova assistant using thread-safe approach"""
+        user_input = self.nova_input.text().strip()
+        if not user_input:
+            return
+
+        self.nova_input.clear()
+        self.add_nova_message("You", user_input)
+
+        # Clean up previous thread safely
+        self._cleanup_nova_thread()
+
+        # Create worker and thread
+        self.nova_thread = QThread()
+        self.nova_worker = NovaWorker(
+            user_input, self.os_distro, self.USE_SAFE_FLAG, self.FORCE_CONFIRM
+        )
+        self.nova_worker.moveToThread(self.nova_thread)
+
+        # Connect signals with Qt.QueuedConnection for thread safety
+        self.nova_worker.status_update.connect(self.nova_status.setText, Qt.QueuedConnection)
+        self.nova_worker.state_update.connect(self.set_assistant_state, Qt.QueuedConnection)
+        self.nova_worker.message_update.connect(self.add_nova_message, Qt.QueuedConnection)
+        self.nova_worker.speak_signal.connect(self.speak_text, Qt.QueuedConnection)
+        self.nova_worker.confirmation_needed.connect(self.handle_command_confirmation, Qt.QueuedConnection)
+
+        # Connect cleanup signals
+        self.nova_worker.finished.connect(self._cleanup_nova_thread, Qt.QueuedConnection)
+
+        # Start processing
+        self.nova_thread.started.connect(self.nova_worker.process_command)
+        self.nova_thread.start()
+
+    def _cleanup_nova_thread(self) -> None:
+        """Safely cleanup Nova thread and worker"""
+        if hasattr(self, 'nova_thread') and self.nova_thread is not None:
+            try:
+                if self.nova_thread.isRunning():
+                    self.nova_thread.quit()
+                    self.nova_thread.wait(2000)
+            except RuntimeError:
+                # Object already deleted
+                pass
+            finally:
+                self.nova_thread = None
+        
+        if hasattr(self, 'nova_worker'):
+            self.nova_worker = None
+
+    def handle_command_confirmation(self, cmd: Dict[str, Any], os_distro: str, user_input: str) -> None:
+        """Handle command confirmation dialog"""
+        reply = QMessageBox.question(
+            self,
+            'Confirm Command',
+            f"Execute {cmd['action']} → {cmd['target']}?",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No
+        )
+        
+        if reply == QMessageBox.Yes:
+            # Use signal instead of direct method call
+            if hasattr(self, 'nova_worker') and self.nova_worker:
+                self.nova_worker.execute_command_signal.emit(cmd)
+            else:
+                response = "Worker not available. Please try again."
+                self.add_nova_message("Nova", response)
+        else:
+            response = "Command cancelled."
+            self.add_nova_message("Nova", response)
+            self.speak_text(response)
+            # Emit finished signal to clean up the worker
+            if hasattr(self, 'nova_worker') and self.nova_worker:
+                self.nova_worker.finished.emit()
+
+    def set_assistant_state(self, state: str) -> None:
+        """Set the assistant animation state"""
+        valid_states = ["idle", "processing", "speaking", "error"]
+        if state not in valid_states:
+            state = "idle"
+        
+        # Store current state
+        self._current_assistant_state = state
+        
+        # Update assistant icon based on state (if needed)
+        # For simple continuous animation, this might not be necessary
+
+    def add_nova_message(self, source: str, message: str) -> None:
+        """Add a message to the Nova conversation display with text color only"""
+        timestamp = time.strftime("%H:%M:%S")
+        colors = STYLE_SHEET['dark' if hasattr(self, 'dark_button') and self.dark_button.isChecked() else 'light']
+        
+        # Store in history (add this block)
+        history_entry = {
+            'timestamp': timestamp,
+            'source': source,
+            'message': message,
+            'full_timestamp': time.strftime("%Y-%m-%d %H:%M:%S")
+        }
+        self.chat_history.append(history_entry)
+
+        # Set text colors without background fills
+        if source == "You":
+            text_color = "#4A90E2"  # Blue for user messages
+        elif source == "System":
+            text_color = "#FFA500"  # Orange for system messages
+        else:  # Nova
+            text_color = "#00C851"  # Green for Nova messages
+        
+        # Format message with text color only, no background
+        formatted_message = f'''
+        <div style="margin: 10px 0; padding: 5px;">
+            <div style="color: {text_color}; padding: 4px; word-wrap: break-word;">
+                <strong>{source}</strong> <span style="color: gray; font-size: 11px;">[{timestamp}]</span><br>
+                <span style="color: {colors['text_color']};">{message}</span>
+            </div>
+        </div>
+        '''
+        
+        if hasattr(self, 'nova_conversation'):
+            self.nova_conversation.append(formatted_message)
+            
+            # Auto-scroll to bottom
+            scrollbar = self.nova_conversation.verticalScrollBar()
+            scrollbar.setValue(scrollbar.maximum())
+
+    def show_nova_history(self) -> None:
+        """Show Nova conversation history in a dialog"""
+        if not self.chat_history:
+            QMessageBox.information(self, "History", "No conversation history found.")
+            return
+        
+        # Create history dialog
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Nova Chat History")
+        dialog.setModal(True)
+        dialog.resize(600, 400)
+        
+        layout = QVBoxLayout(dialog)
+        
+        # History display
+        history_text = QTextEdit()
+        history_text.setReadOnly(True)
+        
+        # Format history
+        for entry in self.chat_history:
+            source_color = "#4A90E2" if entry['source'] == "You" else "#00C851" if entry['source'] == "Nova" else "#FFA500"
+            history_html = f'''
+            <div style="margin: 5px 0; padding: 3px;">
+                <span style="color: {source_color}; font-weight: bold;">{entry['source']}</span>
+                <span style="color: gray; font-size: 10px;"> [{entry['full_timestamp']}]</span><br>
+                <span style="margin-left: 10px;">{entry['message']}</span>
+            </div>
+            '''
+            history_text.append(history_html)
+        
+        layout.addWidget(history_text)
+        
+        # Buttons
+        button_layout = QHBoxLayout()
+        
+        clear_button = QPushButton("Clear History")
+        clear_button.clicked.connect(lambda: self.clear_chat_history(dialog))
+        
+        close_button = QPushButton("Close")
+        close_button.clicked.connect(dialog.accept)
+        
+        button_layout.addWidget(clear_button)
+        button_layout.addStretch()
+        button_layout.addWidget(close_button)
+        
+        layout.addLayout(button_layout)
+        dialog.exec_()
+
+    def clear_chat_history(self, dialog=None) -> None:
+        """Clear the chat history"""
+        reply = QMessageBox.question(
+            self,
+            'Clear History',
+            'Are you sure you want to clear all chat history?',
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No
+        )
+        
+        if reply == QMessageBox.Yes:
+            self.add_nova_message("System", "Chat history cleared.")
+            self.chat_history.clear()
+            if dialog:
+                dialog.accept()
+
+    def update_metrics(self, metrics: Dict[str, Any]) -> None:
+        """Update UI metrics without blocking"""
+        try:
+            # Update labels
+            cpu_data = metrics.get('cpu', {})
+            memory_data = metrics.get('memory', {})
+            disk_data = metrics.get('disk', {})
+            network_data = metrics.get('network', {})
+            
+            self.cpu_percent.setText(f"CPU Usage: {cpu_data.get('cpu_percent', '--')}%")
+            self.memory_label.setText(f"Memory Usage: {memory_data.get('percent', '--')}%")
+            self.disk_label.setText(f"Disk Usage: {disk_data.get('percent', '--')}%")
+            
+            # Update network with proper formatting
+            upload = network_data.get('upload_speed', 0)
+            download = network_data.get('download_speed', 0)
+
+            # Create HTML with colored text to indicate line meanings
+            network_html = f'''
+            <span style="color: #FF6384;">↑ Upload: {upload:.1f} KB/s</span> | 
+            <span style="color: #36A2EB;">↓ Download: {download:.1f} KB/s</span>
+            '''
+            self.network_label.setText(network_html)
+
+            # Update charts
+            self._update_charts(metrics)
+            
+            # Update detailed tables
+            self._update_detail_tables(metrics)
+            
+        except Exception as e:
+            print(f"Error updating metrics: {e}")
+    
+    def _update_charts(self, metrics: Dict[str, Any]) -> None:
+        """Add new data points to chart series and update display ranges for scrolling effect"""
+        try:
+            # Convert metric values to numeric format for charting
+            cpu_percent = float(metrics.get('cpu', {}).get('cpu_percent', 0))
+            memory_percent = float(metrics.get('memory', {}).get('percent', 0))
+            disk_percent = float(metrics.get('disk', {}).get('percent', 0))
+            
+            # Get both upload and download speeds
+            upload_speed = float(metrics.get('network', {}).get('upload_speed', 0)) / 1024  # KB/s
+            download_speed = float(metrics.get('network', {}).get('download_speed', 0)) / 1024  # KB/s
+            
+            # Add current data points to each chart series
+            self.cpu_series.append(self.data_points, cpu_percent)
+            self.memory_series.append(self.data_points, memory_percent)
+            self.disk_series.append(self.data_points, disk_percent)
+            
+            # Add data points to both network series
+            self.network_upload_series.append(self.data_points, upload_speed)
+            self.network_download_series.append(self.data_points, download_speed)
+            
+            # Create scrolling window effect by updating X-axis range
+            if self.data_points >= self.max_data_points:
+                # Calculate the visible window range for recent data
+                start_range = self.data_points - self.max_data_points + 1
+                end_range = self.data_points + 1
+                
+                # Update X-axis range for all charts to show recent data window
+                for chart in [self.cpu_chart, self.memory_chart, self.disk_chart, self.network_chart]:
+                    x_axis = chart.axisX()
+                    if x_axis:
+                        x_axis.setRange(start_range, end_range)
+            
+            # Remove oldest data points to maintain performance and memory usage
+            if self.cpu_series.count() > self.max_data_points:
+                self.cpu_series.removePoints(0, 1)
+                self.memory_series.removePoints(0, 1)
+                self.disk_series.removePoints(0, 1)
+                
+                # Remove points from both network series
+                self.network_upload_series.removePoints(0, 1)
+                self.network_download_series.removePoints(0, 1)
+            
+            # Dynamically adjust network chart Y-axis based on both upload and download data
+            if hasattr(self, 'network_chart'):
+                network_y_axis = self.network_chart.axisY()
+                if network_y_axis and (self.network_upload_series.count() > 0 or self.network_download_series.count() > 0):
+                    # Get all network speed values from both series
+                    all_speeds = []
+                    
+                    # Collect upload speeds
+                    for i in range(self.network_upload_series.count()):
+                        all_speeds.append(self.network_upload_series.at(i).y())
+                    
+                    # Collect download speeds
+                    for i in range(self.network_download_series.count()):
+                        all_speeds.append(self.network_download_series.at(i).y())
+                    
+                    if all_speeds:
+                        max_speed = max(all_speeds)
+                        # Set Y range with padding above maximum value
+                        network_y_axis.setRange(0, max(max_speed * 1.2, 100))
+            
+            # Increment counter for next data point
+            self.data_points += 1
+            
+            # Force Qt to redraw all charts with updated ranges and data
+            for chart in [self.cpu_chart, self.memory_chart, self.disk_chart, self.network_chart]:
+                chart.update()
+                
+            print(f"Charts updated: CPU={cpu_percent}%, Memory={memory_percent}%, Upload={upload_speed:.1f}KB/s, Download={download_speed:.1f}KB/s")
+            
+        except Exception as e:
+            print(f"Error updating charts: {e}")
+
+    def _apply_chart_borders(self) -> None:
+        """Apply professional borders to all chart views"""
+        chart_views = []
+        if hasattr(self, 'cpu_chart_view'): chart_views.append(self.cpu_chart_view)
+        if hasattr(self, 'memory_chart_view'): chart_views.append(self.memory_chart_view)
+        if hasattr(self, 'disk_chart_view'): chart_views.append(self.disk_chart_view)
+        if hasattr(self, 'network_chart_view'): chart_views.append(self.network_chart_view)
+        
+        for view in chart_views:
+            if view:
+                view.setStyleSheet("""
+                    QChartView {
+                        border: 2px solid #CCCCCC;
+                        border-radius: 8px;
+                        background-color: white;
+                    }
+                """)
+
+    def _update_detail_tables(self, metrics: Dict[str, Any]) -> None:
+        """Update detailed metric tables"""
+        try:
+            # Update CPU table
+            cpu_data = metrics.get('cpu', {})
+            if hasattr(self, 'cpu_table'):
+                cpu_items = [
+                    f"{cpu_data.get('cpu_percent', '--')}%",
+                    f"{cpu_data.get('cpu_freq', '--')} MHz",
+                    f"{cpu_data.get('cpu_count_logical', '--')}",
+                    f"{cpu_data.get('cpu_count_physical', '--')}",
+                    f"{cpu_data.get('cpu_load_avg_1min', '--')}",
+                    f"{cpu_data.get('cpu_context_switches', '--')}",
+                    f"{cpu_data.get('cpu_interrupts', '--')}",
+                    f"{cpu_data.get('cpu_syscalls', '--')}",
+                    f"{cpu_data.get('cpu_user_time', '--')}s",
+                    f"{cpu_data.get('cpu_system_time', '--')}s",
+                    f"{cpu_data.get('cpu_idle_time', '--')}s",
+                    f"{cpu_data.get('cpu_temp', '--')}°C"
+                ]
+                
+                for i, item in enumerate(cpu_items):
+                    if i < self.cpu_table.rowCount():
+                        self.cpu_table.setItem(i, 1, QTableWidgetItem(item))
+
+            # Update Memory table
+            memory_data = metrics.get('memory', {})
+            if hasattr(self, 'memory_table'):
+                def format_bytes(bytes_val):
+                    if bytes_val == '--' or bytes_val is None:
+                        return '--'
+                    try:
+                        gb = bytes_val / (1024**3)
+                        if gb > 1:
+                            return f"{gb:.2f} GB"
+                        else:
+                            return f"{bytes_val / (1024**2):.2f} MB"
+                    except:
+                        return str(bytes_val)
+
+                memory_items = [
+                    format_bytes(memory_data.get('total', '--')),
+                    format_bytes(memory_data.get('available', '--')),
+                    f"{memory_data.get('percent', '--')}%",
+                    format_bytes(memory_data.get('used', '--')),
+                    format_bytes(memory_data.get('swap_total', '--')),
+                    format_bytes(memory_data.get('swap_used', '--')),
+                    format_bytes(memory_data.get('swap_free', '--')),
+                    f"{memory_data.get('swap_percent', '--')}%"
+                ]
+                
+                for i, item in enumerate(memory_items):
+                    if i < self.memory_table.rowCount():
+                        self.memory_table.setItem(i, 1, QTableWidgetItem(item))
+
+            # Update Disk table
+            disk_data = metrics.get('disk', {})
+            if hasattr(self, 'disk_table'):
+                disk_items = [
+                    format_bytes(disk_data.get('total', '--')),
+                    format_bytes(disk_data.get('used', '--')),
+                    format_bytes(disk_data.get('free', '--')),
+                    f"{disk_data.get('percent', '--')}%",
+                    f"{disk_data.get('read_count', '--')}",
+                    f"{disk_data.get('write_count', '--')}",
+                    format_bytes(disk_data.get('read_bytes', '--')),
+                    format_bytes(disk_data.get('write_bytes', '--')),
+                    f"{disk_data.get('read_time', '--')}ms",
+                    f"{disk_data.get('write_time', '--')}ms"
+                ]
+                
+                for i, item in enumerate(disk_items):
+                    if i < self.disk_table.rowCount():
+                        self.disk_table.setItem(i, 1, QTableWidgetItem(item))
+
+            # Update Network table
+            network_data = metrics.get('network', {})
+            if hasattr(self, 'network_table'):
+                network_items = [
+                    f"{network_data.get('upload_speed', 0):.1f} KB/s",
+                    f"{network_data.get('download_speed', 0):.1f} KB/s",
+                    format_bytes(network_data.get('total_data_sent', '--')),
+                    format_bytes(network_data.get('total_data_received', '--'))
+                ]
+                
+                for i, item in enumerate(network_items):
+                    if i < self.network_table.rowCount():
+                        self.network_table.setItem(i, 1, QTableWidgetItem(item))
+
+            # Update Battery table
+            battery_data = metrics.get('battery', {})
+            if hasattr(self, 'battery_table'):
+                if isinstance(battery_data, dict):
+                    battery_items = [
+                        f"{battery_data.get('battery_percentage', '--')}%",
+                        battery_data.get('status', '--'),
+                        battery_data.get('time_remaining', '--')
+                    ]
+                else:
+                    battery_items = [str(battery_data), '--', '--']
+                
+                for i, item in enumerate(battery_items):
+                    if i < self.battery_table.rowCount():
+                        self.battery_table.setItem(i, 1, QTableWidgetItem(item))
+
+        except Exception as e:
+            print(f"Error updating detail tables: {e}")
+
+    def update_process_table(self, processes: List[Dict[str, Any]]) -> None:
+        """Update process table without blocking"""
+        try:
+            self.current_processes = processes
+            
+            if hasattr(self, 'process_table'):
+                # Limit processes if not showing all
+                display_processes = processes if self.show_all_processes else processes[:20]
+                
+                self.process_table.setRowCount(len(display_processes))
+                
+                for row, process in enumerate(display_processes):
+                    self.process_table.setItem(row, 0, QTableWidgetItem(str(process.get('pid', '--'))))
+                    self.process_table.setItem(row, 1, QTableWidgetItem(process.get('name', '--')))
+                    self.process_table.setItem(row, 2, QTableWidgetItem(process.get('status', '--')))
+                    self.process_table.setItem(row, 3, QTableWidgetItem(f"{process.get('cpu_percent', 0):.1f}%"))
+                    self.process_table.setItem(row, 4, QTableWidgetItem(f"{process.get('memory_percent', 0):.1f}%"))
+                    self.process_table.setItem(row, 5, QTableWidgetItem(process.get('create_time', '--')))
+                    
+        except Exception as e:
+            print(f"Error updating process table: {e}")
+
+    def update_anomaly_table(self, anomalies: List[Dict[str, Any]]) -> None:
+        """Update the anomaly table with detected anomalies - thread-safe"""
+        try:
+            if not hasattr(self, 'anomaly_table'):
+                print("Anomaly table widget not found")
+                return
+                
+            # Clear existing rows
+            self.anomaly_table.setRowCount(0)
+            
+            if not anomalies:
+                return
+                
+            # Set row count
+            self.anomaly_table.setRowCount(len(anomalies))
+            
+            # Populate table
+            for row, anomaly in enumerate(anomalies):
+                for col, (key, value) in enumerate(anomaly.items()):
+                    if col < self.anomaly_table.columnCount():
+                        item = QTableWidgetItem(str(value))
+                        self.anomaly_table.setItem(row, col, item)
+                        
+            # Refresh the table display
+            self.anomaly_table.viewport().update()
+            
+        except Exception as e:
+            print(f"Error updating anomaly table: {e}")
+
+    def toggle_process_view(self) -> None:
+        """Toggle between showing all processes or limited view"""
+        self.show_all_processes = not self.show_all_processes
+        if hasattr(self, 'show_all_button'):
+            self.show_all_button.setText("Show Less" if self.show_all_processes else "Show More")
+        # Trigger table update with current data
+        self.update_process_table(self.current_processes)
+
+    def toggle_nova_voice_mode(self) -> None:
+        """Toggle voice mode for Nova assistant"""
+        self.VOICE_MODE = not self.VOICE_MODE
+        if hasattr(self, 'nova_voice_button'):
+            self.nova_voice_button.setText("Voice: ON" if self.VOICE_MODE else "Voice: OFF")
+        
+        status = "enabled" if self.VOICE_MODE else "disabled"
+        self.add_nova_message("System", f"Voice mode {status}.")
+
+    def toggle_command_confirmation(self, state: bool) -> None:
+        """Toggle whether commands require confirmation before execution"""
+        self.FORCE_CONFIRM = state
+        status = "enabled" if state else "disabled"
+        self.add_nova_message("System", f"Command confirmation {status}.")
+
+    def set_dark_mode(self) -> None:
+        """Set dark mode theme"""
+        self.set_theme('dark')
+
+    def set_light_mode(self) -> None:
+        """Set light mode theme"""
+        self.set_theme('light')
+
+    def set_theme(self, mode: str = 'dark') -> None:
+        """Apply comprehensive theme styling to all application components"""
         colors = STYLE_SHEET[mode]
-
-        # Main window and tab widget styling
-        self.setStyleSheet(f"""
+        
+        # Apply comprehensive stylesheet covering all widgets
+        comprehensive_stylesheet = f"""
             QMainWindow {{
                 background-color: {colors['background_color']};
-                border: 1px solid {colors['border_color']};
+                color: {colors['text_color']};
             }}
-
+            
+            QWidget {{
+                background-color: {colors['background_color']};
+                color: {colors['text_color']};
+            }}
+            
             QTabWidget::pane {{
                 border: 1px solid {colors['border_color']};
                 background-color: {colors['background_color']};
             }}
-
-            QTabWidget::tab-bar {{
-                alignment: left;
-            }}
-
+            
             QTabBar::tab {{
-                background-color: {colors['background_color']};
+                background-color: {colors['grid_color']};
                 color: {colors['text_color']};
                 padding: 8px 20px;
                 border: 1px solid {colors['border_color']};
                 border-bottom: none;
                 margin-right: 2px;
             }}
-
+            
             QTabBar::tab:selected {{
-                background-color: {colors['grid_color']};
-                border-bottom: none;
+                background-color: {colors['background_color']};
+                color: {colors['text_color']};
+                border-bottom: 1px solid {colors['background_color']};
+                font-weight: bold;
             }}
-
+            
             QTabBar::tab:hover {{
-                background-color: {colors['grid_color']};
+                background-color: {colors.get('hover_color', colors['border_color'])};
             }}
+
             QTextEdit {{
                 background-color: {colors['nova_bg']};
                 color: {colors['nova_text']};
@@ -225,7 +978,7 @@ class MainWindow(QMainWindow):
                 border-radius: 8px;
                 padding: 8px;
             }}
-
+            
             QLineEdit {{
                 background-color: {colors['input_bg']};
                 color: {colors['input_text']};
@@ -233,1555 +986,834 @@ class MainWindow(QMainWindow):
                 padding: 8px;
                 border-radius: 4px;
             }}
-
-            QLineEdit:focus {{
-                border: 2px solid {colors['focus_border']};
-                background-color: {colors['focus_bg']};
-            }}
-
-            QLabel#status_label {{
-                color: {colors['text_color']};
-                font-size: 12px;
-            }}
-        """)
-
-        # Nova-specific styling
-        nova_style = f"""
-            QTextEdit {{
-                background-color: {colors['nova_bg']};
-                color: {colors['nova_text']};
-                border: 1px solid {colors['border_color']};
-                border-radius: 8px;
-                padding: 8px;
-            }}
-
-            QLineEdit {{
-                background-color: {colors['input_bg']};
-                color: {colors['input_text']};
-                border: 1px solid {colors['border_color']};
-                padding: 8px;
-                border-radius: 4px;
-            }}
-
-            QLabel#status_label {{
-                color: {colors['text_color']};
-                font-size: 12px;
-            }}
-        """
-
-        # Charts styling
-        charts = [self.cpu_chart, self.memory_chart, self.disk_chart, self.network_chart]
-        for chart in charts:
-            chart.setTitleBrush(QBrush(QColor(colors["text_color"])))
-            chart.setPlotAreaBackgroundBrush(QBrush(QColor(colors["chart_background"])))
-            chart.setPlotAreaBackgroundVisible(True)
-
-            # Update chart axes
-            for axis in chart.axes():
-                axis.setLabelsColor(QColor(colors["axis_labels"]))
-                axis.setGridLineColor(QColor(colors["grid_lines"]))
-                if isinstance(axis, QValueAxis):
-                    pen = QPen(QColor(colors["axis_color"]))
-                    axis.setLinePen(pen)
-            chart.setBackgroundVisible(False)
-            chart.setPlotAreaBackgroundVisible(True)
-
-            # Update series colors
-            for series in chart.series():
-                pen = QPen(QColor(colors["line"]))
-                pen.setWidth(self.load_config()['gui']['pen_thickness'])
-                series.setPen(pen)
-
-            chart_view = self.findChild(QChartView, chart.objectName())
-            for chart_view in self.findChildren(QChartView):
-                if chart_view:
-                    chart_view.setBackgroundBrush(QBrush(QColor(colors["chart_background"])))
-                    chart_view.setStyleSheet(f"""
-                        QChartView {{
-                            background-color: {colors['chart_background']};
-                            border: 2px solid {colors['border_color']};
-                            border-radius: 4px;
-                            border-radius: 8px;
-                            padding: 10px;
-                            margin: 5px;
-                        }}
-                    """)
-                shadow = chart_view.graphicsEffect()
-                if shadow:
-                    shadow.setColor(QColor(0, 0, 0, 80) if mode == 'light' else QColor(0, 0, 0, 120))
-
-        # Labels styling
-        labels = [self.cpu_percent, self.memory_label, self.disk_label, self.network_label]
-        label_style = f"""
+            
             QLabel {{
                 color: {colors['label_text_color']};
+                background-color: transparent;
                 border: none;
                 padding: 5px;
             }}
-        """
-        for label in labels:
-            label.setStyleSheet(label_style)
-
-        button_style = f"""
+            
             QPushButton {{
-                background-color: {colors['background_color']};
-                color: {colors['text_color']};
+                background-color: {colors.get('button_bg', colors['grid_color'])};
+                color: {colors.get('button_text', colors['text_color'])};
                 border: 1px solid {colors['border_color']};
-                padding: 5px 15px;
+                padding: 8px 16px;
                 border-radius: 4px;
+                font-size: {self.font_size}pt;
             }}
-
+            
             QPushButton:hover {{
-                background-color: {colors['grid_color']};
+                background-color: {colors.get('button_hover', colors['background_color'])};
             }}
-
-            QPushButton:pressed {{
-                background-color: {colors['border_color']};
-            }}
-        """
-        self.show_all_button.setStyleSheet(button_style)
-        self.detect_button.setStyleSheet(button_style)
-
-        # Tables styling
-        tables = [
-            self.process_table, self.cpu_table, self.memory_table,
-            self.disk_table, self.network_table, self.battery_table,
-            self.anomaly_table
-        ]
-
-        table_style = f"""
+            
             QTableWidget {{
                 background-color: {colors['table_background']};
                 color: {colors['table_text_color']};
                 gridline-color: {colors['border_color']};
                 border: 1px solid {colors['border_color']};
+                selection-background-color: transparent;
             }}
-
+            
             QTableWidget::item {{
-                padding: 5px;
-            }}
-
-            QTableWidget::item:selected {{
-                background-color: {colors['grid_color']};
-                color: {colors['text_color']};
-            }}
-
-            QHeaderView::section {{
-                background-color: {colors['background_color']};
-                color: {colors['text_color']};
-                border: 1px solid {colors['border_color']};
-                padding: 5px;
-            }}
-
-            QHeaderView::section:vertical {{
-                background-color: {colors['background_color']};
-                color: {colors['text_color']};
-            }}
-
-            QTableCornerButton::section {{
-                background-color: {colors['background_color']};
-                border: 1px solid {colors['border_color']};
-            }}
-
-            QScrollBar:vertical {{
-                background: {colors['background_color']};
-                border: 1px solid {colors['border_color']};
-                width: 15px;
-                margin: 15px 0 15px 0;
-            }}
-
-            QScrollBar::handle:vertical {{
-                background: {colors['grid_color']};
-                min-height: 30px;
-            }}
-
-            QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{
-                background: none;
-            }}
-
-            QScrollBar:horizontal {{
-                background: {colors['background_color']};
-                border: 1px solid {colors['border_color']};
-                height: 15px;
-                margin: 0 15px 0 15px;
-            }}
-
-            QScrollBar::handle:horizontal {{
-                background: {colors['grid_color']};
-                min-width: 30px;
-            }}
-
-            QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal {{
-                background: none;
-            }}
-            """
-        for table in tables:
-            table.setStyleSheet(table_style)
-
-            # Fix index column styling
-            for i in range(table.rowCount()):
-                index_item = table.verticalHeaderItem(i)
-                if index_item:
-                    index_item.setForeground(QBrush(QColor(colors['text_color'])))
-
-        # Settings widget styling
-        settings_style = f"""
-            QWidget {{
-                background-color: {colors['background_color']};
+                background-color: {colors['table_background']};
                 color: {colors['table_text_color']};
+                padding: 4px;
             }}
-
-            QComboBox {{
-                background-color: {colors['background_color']};
-                color: {colors['text_color']};
-                border: 1px solid {colors['border_color']};
-                padding: 5px;
-                min-width: 100px;
-            }}
-
-            QComboBox::drop-down {{
-                border: 1px solid {colors['border_color']};
-            }}
-
-            QComboBox::down-arrow {{
-                width: 12px;
-                height: 12px;
-            }}
-
-            QComboBox:hover {{
+            
+            QHeaderView::section {{
                 background-color: {colors['grid_color']};
-            }}
-
-            QComboBox QAbstractItemView {{
-                background-color: {colors['background_color']};
                 color: {colors['text_color']};
-                selection-background-color: {colors['grid_color']};
-                selection-color: {colors['text_color']};
-                border: 1px solid {colors['border_color']};
-            }}
-        """
-
-        self.last_run_time.setStyleSheet(f"""
-            QLabel {{
-                font-size: 12px;
-                color: {colors['text_color']};
-                padding: 5px;
-            }}
-        """)
-
-        self.settings_widget.setStyleSheet(settings_style)
-
-        nova_style = f"""
-            QLineEdit {{
-                background-color: {colors['input_bg']};
-                color: {colors['input_text']};
-                border: 1px solid {colors['border_color']};
                 padding: 8px;
-                border-radius: 4px;
+                border: 1px solid {colors['border_color']};
+                font-weight: bold;
             }}
-
-            QLineEdit:focus {{
-                border: 2px solid {colors['focus_border']};
-                background-color: {colors['focus_bg']};
+            
+            QGroupBox {{
+                color: {colors['text_color']};
+                border: 2px solid {colors['border_color']};
+                border-radius: 5px;
+                margin-top: 1ex;
+                font-weight: bold;
+                font-size: {self.font_size}pt;
             }}
-
-            /* Explicit cursor color */
-            QLineEdit::cursor {{
-                color: {colors['input_text']};
-                width: 2px;
+            
+            QGroupBox::title {{
+                subcontrol-origin: margin;
+                left: 10px;
+                padding: 0 5px 0 5px;
+                color: {colors['text_color']};
+                background-color: {colors['background_color']};
+            }}
+            
+            QCheckBox, QRadioButton {{
+                color: {colors['text_color']};
+                spacing: 8px;
+                font-size: {self.font_size}pt;
             }}
         """
-        self.nova_status.setStyleSheet(f"""
-            QLabel {{
-                color: {colors['text_color']};
-                padding: 5px;
-                font-size: 12px;
-            }}
-        """)
-        # Apply to Nova components
-        self.nova_conversation.setStyleSheet(nova_style)
-        self.nova_status.setStyleSheet(nova_style)
-        self.nova_status.setObjectName("status_label")
-        self.nova_input.setStyleSheet(nova_style)
+        
+        # Apply the stylesheet
+        self.setStyleSheet(comprehensive_stylesheet)
+        
+        # Update chart themes with proper colors
+        self._update_chart_themes(mode, colors)
+        
+        print(f"Applied {mode} theme to all application components including charts")
 
-    def set_dark_mode(self):
-        """Switch to dark mode"""
-        self.set_theme('dark')
+    def _update_chart_themes(self, mode: str, colors: dict) -> None:
+        """Update chart background colors and pen colors for current theme"""
+        try:
+            # Define chart colors based on theme mode
+            if mode == 'dark':
+                chart_bg_color = QColor(43, 43, 43)  # Dark background
+                chart_text_color = QColor(255, 255, 255)  # White text
+                plot_area_color = QColor(60, 60, 60)  # Slightly lighter plot area
+                grid_color = QColor(128, 128, 128, 100)  # Semi-transparent gray
+                border_color = QColor(100, 100, 100)
 
-    def set_light_mode(self):
-        """Switch to light mode"""
-        self.set_theme('light')
+                # Dark mode pen colors
+                cpu_pen_color = QColor(255, 99, 71)     # Tomato red
+                memory_pen_color = QColor(75, 192, 192) # Teal
+                disk_pen_color = QColor(138, 43, 226)  # Purple
+                upload_pen_color = QColor(255, 99, 132) # Pink
+                download_pen_color = QColor(54, 162, 235) # Blue
+            else:
+                chart_bg_color = QColor(255, 255, 255)  # Light background
+                chart_text_color = QColor(0, 0, 0)      # Black text
+                plot_area_color = QColor(248, 248, 248) # Light gray plot area
+                grid_color = QColor(200, 200, 200, 150) # Light gray grid
+                border_color = QColor(180, 180, 180)
 
-    def load_config(self):
-        with open('config/config.yaml', 'r') as file:
-            return yaml.safe_load(file)
+                # Light mode pen colors (darker for visibility)
+                cpu_pen_color = QColor(220, 53, 69)     # Dark red
+                memory_pen_color = QColor(40, 167, 69)  # Dark green
+                disk_pen_color = QColor(138, 43, 226)  # Purple 
+                upload_pen_color = QColor(220, 53, 69)  # Dark red
+                download_pen_color = QColor(0, 123, 255) # Bright blue
+            
+            # Update chart backgrounds and axes
+            charts = [self.cpu_chart, self.memory_chart, self.disk_chart, self.network_chart]
+            
+            for chart in charts:
+                if chart:
+                    # Set chart and plot area backgrounds
+                    chart.setBackgroundBrush(QBrush(chart_bg_color))
+                    chart.setPlotAreaBackgroundBrush(QBrush(plot_area_color))
+                    chart.setPlotAreaBackgroundVisible(True)
+                    
+                    # Update title
+                    chart.setTitleBrush(QBrush(chart_text_color))
+                    
+                    # Update axes colors
+                    if chart.axisX():
+                        chart.axisX().setLabelsColor(chart_text_color)
+                        chart.axisX().setTitleBrush(QBrush(chart_text_color))
+                        chart.axisX().setLinePenColor(chart_text_color)
+                        chart.axisX().setGridLineColor(grid_color)
+                    
+                    if chart.axisY():
+                        chart.axisY().setLabelsColor(chart_text_color)
+                        chart.axisY().setTitleBrush(QBrush(chart_text_color))
+                        chart.axisY().setLinePenColor(chart_text_color)
+                        chart.axisY().setGridLineColor(grid_color)
+            
+            # Update series pen colors with theme-appropriate colors
+            self._update_series_colors(cpu_pen_color, memory_pen_color, disk_pen_color, 
+                                    upload_pen_color, download_pen_color)
+            
+            # Update chart view backgrounds
+            chart_views = []
+            if hasattr(self, 'cpu_chart_view'): chart_views.append(self.cpu_chart_view)
+            if hasattr(self, 'memory_chart_view'): chart_views.append(self.memory_chart_view)
+            if hasattr(self, 'disk_chart_view'): chart_views.append(self.disk_chart_view)
+            if hasattr(self, 'network_chart_view'): chart_views.append(self.network_chart_view)
+            
+            for view in chart_views:
+                if view:
+                    view.setBackgroundBrush(QBrush(chart_bg_color))
+            
+            print(f"Chart themes updated for {mode} mode")
+            
+        except Exception as e:
+            print(f"Error updating chart themes: {e}")
 
-    def setup_chart(self, chart, series, title, y_axis_max, y_axis_tick_count=6):
-        config = self.load_config()
-        colors = STYLE_SHEET["dark"]  # Default to dark theme initially
+    def _update_series_colors(self, cpu_color: QColor, memory_color: QColor, disk_color: QColor,
+                            upload_color: QColor, download_color: QColor) -> None:
+        """Update series pen colors"""
+        try:
+            # Update CPU series color
+            if hasattr(self, 'cpu_series'):
+                cpu_pen = self.cpu_series.pen()
+                cpu_pen.setColor(cpu_color)
+                cpu_pen.setWidth(2)
+                self.cpu_series.setPen(cpu_pen)
+            
+            # Update Memory series color
+            if hasattr(self, 'memory_series'):
+                memory_pen = self.memory_series.pen()
+                memory_pen.setColor(memory_color)
+                memory_pen.setWidth(2)
+                self.memory_series.setPen(memory_pen)
+            
+            # Update Disk series color
+            if hasattr(self, 'disk_series'):
+                disk_pen = self.disk_series.pen()
+                disk_pen.setColor(disk_color)
+                disk_pen.setWidth(2)
+                self.disk_series.setPen(disk_pen)
+            
+            # Update Network series colors
+            if hasattr(self, 'network_upload_series'):
+                upload_pen = self.network_upload_series.pen()
+                upload_pen.setColor(upload_color)
+                upload_pen.setWidth(2)
+                self.network_upload_series.setPen(upload_pen)
+            
+            if hasattr(self, 'network_download_series'):
+                download_pen = self.network_download_series.pen()
+                download_pen.setColor(download_color)
+                download_pen.setWidth(2)
+                self.network_download_series.setPen(download_pen)
+                
+        except Exception as e:
+            print(f"Error updating series colors: {e}")
 
-        # Set unique object name for the chart
-        chart.setObjectName(f"{title.lower().replace(' ', '_')}_chart")
+    def load_config(self) -> Dict[str, Any]:
+        """Load configuration - wrapper for module function"""
+        return load_config()
 
-        # Create and style the chart view
-        chart_view = QChartView(chart)
-        chart_view.setObjectName(f"{title.lower().replace(' ', '_')}_view")
-        chart_view.setRenderHint(QPainter.Antialiasing)
-        chart_view.setBackgroundBrush(QBrush(QColor(colors["chart_background"])))
-
-
-        # Add container widget for border
-        container = QWidget()
-        container_layout = QVBoxLayout(container)
-        container_layout.setContentsMargins(1, 1, 1, 1)
-        container_layout.addWidget(chart_view)
-
-        container.setStyleSheet(f"""
-            QWidget {{
-                background-color: {colors['chart_background']};
-                border: 2px solid {colors['border_color']};
-            }}
-        """)
-
-        chart.setPlotAreaBackgroundBrush(QBrush(QColor(colors["chart_background"])))
-        chart.setPlotAreaBackgroundVisible(True)
-
-        # Set up series
-        series.setColor(QColor(colors['line']))
-        chart.addSeries(series)
-
-        # Chart configuration
-        chart.setBackgroundVisible(False)  # Disable background
-        chart.setTitleBrush(QBrush(QColor(colors['text_color'])))
-        chart.legend().hide()
-        chart.setAnimationOptions(QChart.SeriesAnimations)
-
-        # Configure axes
-        axis_x = QValueAxis()
-        axis_y = QValueAxis()
-
-        # X-axis setup
-        axis_x.setLabelsVisible(False)
-        axis_x.setRange(0, self.max_data_points)
-        axis_x.setGridLineColor(QColor(colors['chart_grid']))
-        axis_x.setLabelsColor(QColor(colors['axis_labels']))
-        axis_x.setGridLineVisible(False)
-        axis_x.setLabelsVisible(False)
-        axis_x.setTickCount(0)
-        pen_x = QPen(QColor(colors["axis_color"]))
-        axis_x.setLinePen(pen_x)
-
-        # Y-axis setup
-        axis_y.setRange(0, y_axis_max)
-        axis_y.setTickCount(y_axis_tick_count)
-        axis_y.setGridLineColor(QColor(colors['chart_grid']))
-        axis_y.setLabelsColor(QColor(colors['axis_labels']))
-        pen_y = QPen(QColor(colors["axis_color"]))
-        axis_y.setLinePen(pen_y)
-
-        # Attach axes
-        chart.addAxis(axis_x, Qt.AlignBottom)
-        chart.addAxis(axis_y, Qt.AlignLeft)
-        series.attachAxis(axis_x)
-        series.attachAxis(axis_y)
-
-        # Series line style
-        pen = QPen(QColor(colors['line']))
-        pen.setWidth(config['gui']['pen_thickness'])
-        series.setPen(pen)
-
-        return container, axis_y
-
-    def setup_ui(self):
-        config = self.load_config()
-        colors = STYLE_SHEET["dark"]
-        self.max_count = config['monitoring']['process']['max_count']
-
-        self.setWindowTitle("VitalWatch")
-        self.setMinimumSize(820, 600)
-
-        # Create central widget and layout
+    def setup_ui(self) -> None:
+        """Setup the complete UI"""
+        self.setWindowTitle("VitalWatch - System Monitor")
+        self.setGeometry(100, 100, 1400, 900)
+        
+        # Central widget and main layout
         central_widget = QWidget()
         self.setCentralWidget(central_widget)
-        layout = QVBoxLayout(central_widget)
-
+        main_layout = QVBoxLayout(central_widget)
+        
         # Create tab widget
-        tabs = QTabWidget()
-        layout.addWidget(tabs)
+        self.tabs = QTabWidget()
+        main_layout.addWidget(self.tabs)
+        
+        # Setup all tabs
+        self._setup_overview_tab(self.tabs)
+        self._setup_nova_tab(self.tabs)
+        self._setup_detail_tabs(self.tabs)
+        self._setup_processes_tab(self.tabs)
+        self._setup_anomaly_tab(self.tabs)
+        self._setup_settings_tab(self.tabs)
+        
+        # Apply default theme
+        self.set_dark_mode()
+        
+        # Setup assistant animation
+        self.setup_assistant_animation()
 
-        # overview tab
+    def _setup_overview_tab(self, tabs: QTabWidget) -> None:
+        """Create overview tab with system metrics labels positioned directly above their charts"""
         overview_widget = QWidget()
-        overview_layout = QGridLayout(overview_widget)
+        overview_layout = QVBoxLayout(overview_widget)
+        
+        # Create main container for all metric+chart pairs
+        main_container = QWidget()
+        main_layout = QGridLayout(main_container)
+        
+        # Configure charts before creating views
+        self._setup_charts()
+        
+        # Create CPU metric container with label above chart
+        cpu_container = QWidget()
+        cpu_layout = QVBoxLayout(cpu_container)
+        cpu_layout.setContentsMargins(5, 5, 5, 5)
+        cpu_layout.setSpacing(5)
+        
+        self.cpu_percent.setAlignment(Qt.AlignCenter)
+        cpu_layout.addWidget(self.cpu_percent)
+        
+        self.cpu_chart_view = QChartView(self.cpu_chart)
+        self.cpu_chart_view.setRenderHint(QPainter.Antialiasing)
+        self.cpu_chart_view.setMinimumHeight(200)
+        cpu_layout.addWidget(self.cpu_chart_view)
+        
+        # Create Memory metric container with label above chart
+        memory_container = QWidget()
+        memory_layout = QVBoxLayout(memory_container)
+        memory_layout.setContentsMargins(5, 5, 5, 5)
+        memory_layout.setSpacing(5)
+        
+        self.memory_label.setAlignment(Qt.AlignCenter)
+        memory_layout.addWidget(self.memory_label)
+        
+        self.memory_chart_view = QChartView(self.memory_chart)
+        self.memory_chart_view.setRenderHint(QPainter.Antialiasing)
+        self.memory_chart_view.setMinimumHeight(200)
+        memory_layout.addWidget(self.memory_chart_view)
+        
+        # Create Disk metric container with label above chart
+        disk_container = QWidget()
+        disk_layout = QVBoxLayout(disk_container)
+        disk_layout.setContentsMargins(5, 5, 5, 5)
+        disk_layout.setSpacing(5)
+        
+        self.disk_label.setAlignment(Qt.AlignCenter)
+        disk_layout.addWidget(self.disk_label)
+        
+        self.disk_chart_view = QChartView(self.disk_chart)
+        self.disk_chart_view.setRenderHint(QPainter.Antialiasing)
+        self.disk_chart_view.setMinimumHeight(200)
+        disk_layout.addWidget(self.disk_chart_view)
+        
+        # Create Network metric container with label above chart
+        network_container = QWidget()
+        network_layout = QVBoxLayout(network_container)
+        network_layout.setContentsMargins(5, 5, 5, 5)
+        network_layout.setSpacing(5)
+        
+        self.network_label.setAlignment(Qt.AlignCenter)
+        network_layout.addWidget(self.network_label)
+        
+        self.network_chart_view = QChartView(self.network_chart)
+        self.network_chart_view.setRenderHint(QPainter.Antialiasing)
+        self.network_chart_view.setMinimumHeight(200)
+        network_layout.addWidget(self.network_chart_view)
+        
+        # Arrange metric containers in 2x2 grid layout
+        main_layout.addWidget(cpu_container, 0, 0)
+        main_layout.addWidget(memory_container, 0, 1)
+        main_layout.addWidget(disk_container, 1, 0)
+        main_layout.addWidget(network_container, 1, 1)
+        
+        # Set equal column and row stretching for balanced layout
+        main_layout.setColumnStretch(0, 1)
+        main_layout.setColumnStretch(1, 1)
+        main_layout.setRowStretch(0, 1)
+        main_layout.setRowStretch(1, 1)
+        
+        overview_layout.addWidget(main_container)
+        self.tabs.addTab(overview_widget, "Overview")
 
-        # charts
-        cpu_chart_view, _ = self.setup_chart(self.cpu_chart, self.cpu_series, "CPU Usage %", y_axis_max=100)
-        memory_chart_view, _ = self.setup_chart(self.memory_chart, self.memory_series, "Memory Usage %", y_axis_max=100)
-        disk_chart_view, _ = self.setup_chart(self.disk_chart, self.disk_series, "Disk Usage %", y_axis_max=100)
+        # Apply borders after all chart views are created
+        self._apply_chart_borders()
 
-        self.max_network_value = 100
-        network_chart_view, self.network_y = self.setup_chart(self.network_chart, self.network_series, "Network Usage Kbps", y_axis_max=self.max_network_value)
+        print("Overview tab created with labels positioned directly above charts")
 
-        # Add labels to overview tab
-        overview_layout.addWidget(self.cpu_percent, 0, 0)
-        overview_layout.addWidget(cpu_chart_view, 1, 0)
-        overview_layout.addWidget(self.memory_label, 0, 1)
-        overview_layout.addWidget(memory_chart_view, 1, 1)
-        overview_layout.addWidget(self.disk_label, 2, 0)
-        overview_layout.addWidget(disk_chart_view, 3, 0)
-        overview_layout.addWidget(self.network_label, 2, 1)
-        overview_layout.addWidget(network_chart_view, 3, 1)
-        #tabs.addTab(overview_widget, "Overview")
+    def _setup_charts(self) -> None:
+        """Configure chart objects with proper axes and series attachments"""
+        # Setup CPU, Memory, and Disk charts (single series each)
+        single_series_charts = [
+            (self.cpu_chart, self.cpu_series, "CPU Usage (%)", "Time", "Usage %", 100, QColor(255, 99, 71)),
+            (self.memory_chart, self.memory_series, "Memory Usage (%)", "Time", "Usage %", 100, QColor(75, 192, 192)),
+            (self.disk_chart, self.disk_series, "Disk Usage (%)", "Time", "Usage %", 100, QColor(255, 205, 86))
+        ]
+        
+        for chart, series, title, x_label, y_label, y_max, color in single_series_charts:
+            # Remove any existing series to prevent conflicts
+            chart.removeAllSeries()
+            
+            # Add the data series to the chart
+            chart.addSeries(series)
+            chart.setTitle(title)
+            chart.legend().hide()
+            
+            # Set series color
+            pen = series.pen()
+            pen.setColor(color)
+            pen.setWidth(2)
+            series.setPen(pen)
+            
+            # Create X-axis for time-based data points
+            axis_x = QValueAxis()
+            axis_x.setTitleText(x_label)
+            axis_x.setLabelFormat("%d")
+            axis_x.setRange(0, self.max_data_points)
+            axis_x.setTickCount(5)
+            
+            # Create Y-axis for metric values
+            axis_y = QValueAxis()
+            axis_y.setTitleText(y_label)
+            axis_y.setLabelFormat("%.1f")
+            axis_y.setRange(0, y_max)
+            axis_y.setTickCount(6)
+            
+            # Attach axes to chart and link series to axes
+            chart.addAxis(axis_x, Qt.AlignBottom)
+            chart.addAxis(axis_y, Qt.AlignLeft)
+            series.attachAxis(axis_x)
+            series.attachAxis(axis_y)
+            
+            # Disable animations for real-time performance
+            chart.setAnimationOptions(QChart.NoAnimation)
+        
+        # Setup Network chart with dual series (upload and download)
+        self.network_chart.removeAllSeries()
+        
+        # Add both upload and download series
+        self.network_chart.addSeries(self.network_upload_series)
+        self.network_chart.addSeries(self.network_download_series)
+        self.network_chart.setTitle("Network Speed (KB/s)")
+        self.network_chart.legend().hide()  # Hide legend
+        
+        # Configure upload series appearance (red color)
+        upload_pen = self.network_upload_series.pen()
+        upload_pen.setColor(QColor(255, 99, 132))  # Red
+        upload_pen.setWidth(2)
+        self.network_upload_series.setPen(upload_pen)
+        self.network_upload_series.setName("Upload Speed")
+        
+        # Configure download series appearance (blue color)
+        download_pen = self.network_download_series.pen()
+        download_pen.setColor(QColor(54, 162, 235))  # Blue
+        download_pen.setWidth(2)
+        self.network_download_series.setPen(download_pen)
+        self.network_download_series.setName("Download Speed")
+        
+        # Create axes for network chart
+        network_axis_x = QValueAxis()
+        network_axis_x.setTitleText("Time")
+        network_axis_x.setLabelFormat("%d")
+        network_axis_x.setRange(0, self.max_data_points)
+        network_axis_x.setTickCount(5)
+        
+        network_axis_y = QValueAxis()
+        network_axis_y.setTitleText("Speed (KB/s)")
+        network_axis_y.setLabelFormat("%.1f")
+        network_axis_y.setRange(0, 1000)  # Initial range, will be adjusted dynamically
+        network_axis_y.setTickCount(6)
+        
+        # Attach axes to chart and link both series to same axes
+        self.network_chart.addAxis(network_axis_x, Qt.AlignBottom)
+        self.network_chart.addAxis(network_axis_y, Qt.AlignLeft)
+        
+        # Attach both series to the same axes
+        self.network_upload_series.attachAxis(network_axis_x)
+        self.network_upload_series.attachAxis(network_axis_y)
+        self.network_download_series.attachAxis(network_axis_x)
+        self.network_download_series.attachAxis(network_axis_y)
+        
+        # Disable animations for real-time performance
+        self.network_chart.setAnimationOptions(QChart.NoAnimation)
+        
+        print("Charts configured with proper axes and dual network series")
 
-        # Anomaly Detection tab
-        anomaly_widget = QWidget()
-        anomaly_layout = QVBoxLayout(anomaly_widget)
+    def _setup_nova_tab(self, tabs: QTabWidget) -> None:
+        """Setup Nova assistant tab"""
+        nova_widget = QWidget()
+        nova_layout = QVBoxLayout(nova_widget)
+        
+        # Nova title
+        nova_title = QLabel("Nova Virtual Assistant")
+        nova_title.setStyleSheet("font-size: 18px; font-weight: bold;")
+        nova_title.setAlignment(Qt.AlignCenter)
+        
+        # Nova description
+        nova_description = QLabel("Nova is an intelligent system-command assistant that can help you with system tasks and answer questions.")
+        nova_description.setWordWrap(True)
+        nova_description.setAlignment(Qt.AlignCenter)
+        
+        # Assistant icon container
+        feedback_container = QWidget()
+        feedback_layout = QVBoxLayout(feedback_container)
+        feedback_layout.setAlignment(Qt.AlignCenter)
 
-        # Add status label above
-        self.anomaly_status = QLabel("System Status: Not Checked")
-        self.anomaly_status.setAlignment(Qt.AlignCenter)
-        self.anomaly_status.setStyleSheet("""
-            QLabel {
-                font-size: 16px;
-                padding: 10px;
-                border-radius: 5px;
-                background-color: {colors['anomaly_status_bg']};
-                color: white;
-            }
-        """)
+        self.assistant_icon = QLabel()
+        self.assistant_icon.setAlignment(Qt.AlignCenter)
+        self.assistant_icon.setFixedSize(160, 160)
+        self.assistant_icon.setStyleSheet("border: none;")  # Remove any borders
+        feedback_layout.addWidget(self.assistant_icon, 0, Qt.AlignCenter)  # Center in layout
+                
+        # Conversation display
+        self.nova_conversation = QTextEdit()
+        self.nova_conversation.setReadOnly(True)
+        self.nova_conversation.setMinimumHeight(300)
+        
+        # Input controls
+        input_container = QWidget()
+        input_layout = QHBoxLayout(input_container)
+        
+        self.nova_input = QLineEdit()
+        self.nova_input.setPlaceholderText("Type your command or question here...")
+        self.nova_input.returnPressed.connect(self.send_nova_command)
+        
+        self.nova_send_button = QPushButton("Send")
+        self.nova_send_button.clicked.connect(self.send_nova_command)
+        
+        self.nova_voice_button = QPushButton("Voice: OFF")
+        self.nova_voice_button.clicked.connect(self.toggle_nova_voice_mode)
+        
+        self.nova_history_button = QPushButton("History")
+        self.nova_history_button.clicked.connect(self.show_nova_history)
+        
+        input_layout.addWidget(self.nova_input)
+        input_layout.addWidget(self.nova_send_button)
+        input_layout.addWidget(self.nova_voice_button)
+        input_layout.addWidget(self.nova_history_button)
+        
+        # Status
+        self.nova_status = QLabel("Nova is ready. Type a command or question.")
+        self.nova_status.setAlignment(Qt.AlignCenter)
+        
+        # Add to layout
+        nova_layout.addWidget(nova_title)
+        nova_layout.addWidget(nova_description)
+        nova_layout.addWidget(feedback_container)
+        nova_layout.addWidget(self.nova_conversation)
+        nova_layout.addWidget(input_container)
+        nova_layout.addWidget(self.nova_status)
+        
+        self.tabs.addTab(nova_widget, "Nova Assistant")
 
-        # Add last run time label
-        self.last_run_time = QLabel("Last Run: Never")
-        self.last_run_time.setAlignment(Qt.AlignCenter)
+    def _setup_detail_tabs(self, tabs: QTabWidget) -> None:
+        """Setup detailed metric tabs with no selection highlighting"""
+        # CPU Details
+        cpu_widget = QWidget()
+        cpu_layout = QVBoxLayout(cpu_widget)
+        self.cpu_table = QTableWidget(12, 2)
+        self.cpu_table.setHorizontalHeaderLabels(["Metric", "Value"])
+        self.cpu_table.setEditTriggers(QTableWidget.NoEditTriggers)
+        self.cpu_table.setSelectionMode(QTableWidget.NoSelection)  # Disable selection
+        self.cpu_table.setFocusPolicy(Qt.NoFocus)  # Remove focus highlighting
+        
+        cpu_header = self.cpu_table.horizontalHeader()
+        for i in range(self.cpu_table.columnCount()):
+            cpu_header.setSectionResizeMode(i, QHeaderView.Stretch)
+        self.cpu_table.verticalHeader().setVisible(False)
+        
+        cpu_metrics = [
+            "CPU Usage", "CPU Frequency", "Logical Cores", "Physical Cores",
+            "Load Average", "Context Switches", "Interrupts", "Syscalls",
+            "User Time", "System Time", "Idle Time", "Temperature"
+        ]
+        for i, metric in enumerate(cpu_metrics):
+            self.cpu_table.setItem(i, 0, QTableWidgetItem(metric))
+            self.cpu_table.setItem(i, 1, QTableWidgetItem("--"))
+        
+        cpu_layout.addWidget(self.cpu_table)
+        self.tabs.addTab(cpu_widget, "CPU Details")
+        
+        # Memory Details
+        memory_widget = QWidget()
+        memory_layout = QVBoxLayout(memory_widget)
+        self.memory_table = QTableWidget(8, 2)
+        self.memory_table.setHorizontalHeaderLabels(["Metric", "Value"])
+        self.memory_table.setEditTriggers(QTableWidget.NoEditTriggers)
+        self.memory_table.setSelectionMode(QTableWidget.NoSelection)  # Disable selection
+        self.memory_table.setFocusPolicy(Qt.NoFocus)  # Remove focus highlighting
+        
+        memory_header = self.memory_table.horizontalHeader()
+        for i in range(self.memory_table.columnCount()):
+            memory_header.setSectionResizeMode(i, QHeaderView.Stretch)
+        self.memory_table.verticalHeader().setVisible(False)
+        
+        memory_metrics = [
+            "Total Memory", "Available Memory", "Memory Usage", "Used Memory",
+            "Swap Total", "Swap Used", "Swap Free", "Swap Usage"
+        ]
+        for i, metric in enumerate(memory_metrics):
+            self.memory_table.setItem(i, 0, QTableWidgetItem(metric))
+            self.memory_table.setItem(i, 1, QTableWidgetItem("--"))
+        
+        memory_layout.addWidget(self.memory_table)
+        self.tabs.addTab(memory_widget, "Memory Details")
+        
+        # Disk Details
+        disk_widget = QWidget()
+        disk_layout = QVBoxLayout(disk_widget)
+        self.disk_table = QTableWidget(10, 2)
+        self.disk_table.setHorizontalHeaderLabels(["Metric", "Value"])
+        self.disk_table.setEditTriggers(QTableWidget.NoEditTriggers)
+        self.disk_table.setSelectionMode(QTableWidget.NoSelection)  # Disable selection
+        self.disk_table.setFocusPolicy(Qt.NoFocus)  # Remove focus highlighting
+        
+        disk_header = self.disk_table.horizontalHeader()
+        for i in range(self.disk_table.columnCount()):
+            disk_header.setSectionResizeMode(i, QHeaderView.Stretch)
+        self.disk_table.verticalHeader().setVisible(False)
+        
+        disk_metrics = [
+            "Total Space", "Used Space", "Free Space", "Usage",
+            "Read Count", "Write Count", "Read Bytes", "Write Bytes",
+            "Read Time", "Write Time"
+        ]
+        for i, metric in enumerate(disk_metrics):
+            self.disk_table.setItem(i, 0, QTableWidgetItem(metric))
+            self.disk_table.setItem(i, 1, QTableWidgetItem("--"))
+        
+        disk_layout.addWidget(self.disk_table)
+        self.tabs.addTab(disk_widget, "Disk Details")
+        
+        # Network Details
+        network_widget = QWidget()
+        network_layout = QVBoxLayout(network_widget)
+        self.network_table = QTableWidget(4, 2)
+        self.network_table.setHorizontalHeaderLabels(["Metric", "Value"])
+        self.network_table.setEditTriggers(QTableWidget.NoEditTriggers)
+        self.network_table.setSelectionMode(QTableWidget.NoSelection)  # Disable selection
+        self.network_table.setFocusPolicy(Qt.NoFocus)  # Remove focus highlighting
+        
+        network_header = self.network_table.horizontalHeader()
+        for i in range(self.network_table.columnCount()):
+            network_header.setSectionResizeMode(i, QHeaderView.Stretch)
+        self.network_table.verticalHeader().setVisible(False)
+        
+        network_metrics = ["Upload Speed", "Download Speed", "Total Sent", "Total Received"]
+        for i, metric in enumerate(network_metrics):
+            self.network_table.setItem(i, 0, QTableWidgetItem(metric))
+            self.network_table.setItem(i, 1, QTableWidgetItem("--"))
+        
+        network_layout.addWidget(self.network_table)
+        self.tabs.addTab(network_widget, "Network Details")
+        
+        # Battery Details
+        battery_widget = QWidget()
+        battery_layout = QVBoxLayout(battery_widget)
+        self.battery_table = QTableWidget(3, 2)
+        self.battery_table.setHorizontalHeaderLabels(["Metric", "Value"])
+        self.battery_table.setEditTriggers(QTableWidget.NoEditTriggers)
+        self.battery_table.setSelectionMode(QTableWidget.NoSelection)  # Disable selection
+        self.battery_table.setFocusPolicy(Qt.NoFocus)  # Remove focus highlighting
+        
+        battery_header = self.battery_table.horizontalHeader()
+        for i in range(self.battery_table.columnCount()):
+            battery_header.setSectionResizeMode(i, QHeaderView.Stretch)
+        self.battery_table.verticalHeader().setVisible(False)
+        
+        battery_metrics = ["Battery Percentage", "Status", "Time Remaining"]
+        for i, metric in enumerate(battery_metrics):
+            self.battery_table.setItem(i, 0, QTableWidgetItem(metric))
+            self.battery_table.setItem(i, 1, QTableWidgetItem("--"))
+        
+        battery_layout.addWidget(self.battery_table)
+        self.tabs.addTab(battery_widget, "Battery Details")
 
-        # Create button to trigger detection
-        self.detect_button = QPushButton("Run Anomaly Detection")
-        self.detect_button.clicked.connect(self.on_detect_clicked)
-
-        # Create horizontal container for button and last run time
-        button_container = QWidget()
-        button_layout = QHBoxLayout(button_container)
-        button_layout.setAlignment(Qt.AlignCenter)
-
-        # Add widgets to horizontal layout with spacing
-        button_layout.addWidget(self.detect_button)
-        button_layout.addWidget(self.last_run_time)
-
-        # Set equal stretch for both widgets
-        button_layout.setStretchFactor(self.detect_button, 1)
-        button_layout.setStretchFactor(self.last_run_time, 1)
-
-        # Create table for results
-        self.anomaly_table = QTableWidget()
-        self.anomaly_table.setColumnCount(5)  # Adjust columns based on your metrics
-        self.anomaly_table.setHorizontalHeaderLabels(['CPU %', 'Memory %', 'Disk %', 'Network', 'Status'])
-        self.anomaly_table.setEditTriggers(QTableWidget.NoEditTriggers)
-
-        # Style the table header
-        anomaly_header = self.anomaly_table.horizontalHeader()
-        for i in range(self.anomaly_table.columnCount()):
-            anomaly_header.setSectionResizeMode(i, QHeaderView.Stretch)
-        self.anomaly_table.verticalHeader().setVisible(False)
-
-        # Add widgets to layout
-        anomaly_layout.addWidget(self.anomaly_status)
-        anomaly_layout.addWidget(button_container)
-        anomaly_layout.addWidget(self.anomaly_table)
-
-        # Processes tab
+    def _setup_processes_tab(self, tabs: QTabWidget) -> None:
+        """Setup processes tab"""
         processes_widget = QWidget()
         processes_layout = QVBoxLayout(processes_widget)
-
-        # Add Show All/Show Less button
+        
+        # Process controls
         button_container = QWidget()
         button_layout = QHBoxLayout(button_container)
         button_layout.setAlignment(Qt.AlignRight)
+        
         self.show_all_button = QPushButton("Show More")
         self.show_all_button.setMaximumWidth(130)
         self.show_all_button.setFixedHeight(30)
         self.show_all_button.clicked.connect(self.toggle_process_view)
         self.show_all_processes = False
+        
         button_layout.addWidget(self.show_all_button)
         processes_layout.addWidget(button_container)
-
-        # Create table widget for processes
+        
+        # Process table
         self.process_table = QTableWidget()
-        self.process_table.setColumnCount(5)
-        self.process_table.setHorizontalHeaderLabels(['Process Name', 'Status', 'CPU %', 'Memory %', 'Create Time'])
+        self.process_table.setColumnCount(6)
+        self.process_table.setHorizontalHeaderLabels([
+            "PID", "Name", "Status", "CPU %", "Memory %", "Created"
+        ])
+        self.process_table.setEditTriggers(QTableWidget.NoEditTriggers)
+        self.process_table.setSelectionMode(QTableWidget.NoSelection)
+        self.process_table.setFocusPolicy(Qt.NoFocus)
 
-        # Set column stretching
-        header = self.process_table.horizontalHeader()
+        process_header = self.process_table.horizontalHeader()
         for i in range(self.process_table.columnCount()):
-            header.setSectionResizeMode(i, QHeaderView.Stretch)
-
-        header.setDefaultAlignment(Qt.AlignLeft)
+            process_header.setSectionResizeMode(i, QHeaderView.Stretch)
         self.process_table.verticalHeader().setVisible(False)
+        
         processes_layout.addWidget(self.process_table)
-        #tabs.addTab(processes_widget, "Processes")
+        self.tabs.addTab(processes_widget, "Processes")
 
-        # Cpu details tab
-        cpu_widget = QWidget()
-        cpu_layout = QVBoxLayout(cpu_widget)
-        self.cpu_table = QTableWidget()
-        cpu_metrics = [
-            ("CPU Usage", "--"),
-            ("CPU Frequency", "--"),
-            ("Logical Core Count", "--"),
-            ("Physical Core Count", "--"),
-            ("CPU Load", "--"),
-            ("Context Switches", "--"),
-            ("Interrupts", "--"),
-            ("System Calls", "--"),
-            ("User Time", "--"),
-            ("System Time", "--"),
-            ("Idle Time", "--"),
-            ("CPU Temperature", "--"),
-        ]
-        self.cpu_table.setRowCount(len(cpu_metrics))
-        self.cpu_table.setColumnCount(2)
-        self.cpu_table.setHorizontalHeaderLabels(["Metric", "Value"])
 
-        cpu_header = self.cpu_table.horizontalHeader()
-        for i in range(self.cpu_table.columnCount()):
-            cpu_header.setSectionResizeMode(i, QHeaderView.Stretch)
+    def _setup_anomaly_tab(self, tabs: QTabWidget) -> None:
+        """Setup anomaly detection tab"""
+        anomaly_widget = QWidget()
+        anomaly_layout = QVBoxLayout(anomaly_widget)
+        
+        # Anomaly status
+        self.anomaly_status = QLabel("Ready to detect anomalies in system performance.")
+        self.anomaly_status.setAlignment(Qt.AlignCenter)
+        self.anomaly_status.setStyleSheet("font-size: 14px; padding: 10px;")
+        
+        # Detection controls
+        button_container = QWidget()
+        button_layout = QHBoxLayout(button_container)
+        button_layout.setAlignment(Qt.AlignCenter)
+        
+        self.detect_button = QPushButton("Run Detection")
+        self.detect_button.setFixedHeight(35)
+        self.detect_button.clicked.connect(self.run_anomaly_detection)
+        
+        self.last_run_time = QLabel("Last run: Never")
+        self.last_run_time.setStyleSheet("font-size: 12px; color: gray; padding: 5px;")
+        
+        button_layout.addWidget(self.detect_button)
+        button_layout.addWidget(self.last_run_time)
+        
+        # Anomaly table
+        self.anomaly_table = QTableWidget()
+        self.anomaly_table.setColumnCount(4)
+        self.anomaly_table.setHorizontalHeaderLabels([
+            "Timestamp", "Type", "Value", "Severity"
+        ])
+        self.anomaly_table.setEditTriggers(QTableWidget.NoEditTriggers)
+        self.anomaly_table.setSelectionMode(QTableWidget.NoSelection)
+        self.anomaly_table.setFocusPolicy(Qt.NoFocus)
+        
+        anomaly_header = self.anomaly_table.horizontalHeader()
+        for i in range(self.anomaly_table.columnCount()):
+            anomaly_header.setSectionResizeMode(i, QHeaderView.Stretch)
+        self.anomaly_table.verticalHeader().setVisible(False)
+        
+        anomaly_layout.addWidget(self.anomaly_status)
+        anomaly_layout.addWidget(button_container)
+        anomaly_layout.addWidget(self.anomaly_table)
+        self.tabs.addTab(anomaly_widget, "Anomaly Detection")
 
-        for row, (metric_name, metric_value) in enumerate(cpu_metrics):
-            self.cpu_table.setItem(row, 0, QTableWidgetItem(metric_name))
-            self.cpu_table.setItem(row, 1, QTableWidgetItem(str(metric_value)))
-
-        self.cpu_table.verticalHeader().setVisible(False)
-        self.cpu_table.horizontalHeader().setStretchLastSection(True)
-        cpu_layout.addWidget(self.cpu_table)
-        #tabs.addTab(cpu_widget, "CPU Details")
-
-        # Memory details tab
-        memory_widget = QWidget()
-        memory_layout = QVBoxLayout(memory_widget)
-        self.memory_table = QTableWidget()
-        self.memory_table.setRowCount(8)
-        self.memory_table.setColumnCount(2)
-        self.memory_table.setHorizontalHeaderLabels(["Metric", "Value"])
-
-        memory_header = self.memory_table.horizontalHeader()
-        for i in range(self.memory_table.columnCount()):
-            memory_header.setSectionResizeMode(i, QHeaderView.Stretch)
-
-        # Populate the table with memory details
-        memory_metrics = [
-            ("Total Memory", "--"),
-            ("Available Memory", "--"),
-            ("Memory Usage", "--"),
-            ("Used Memory", "--"),
-            ("Swap Total", "--"),
-            ("Swap Used", "--"),
-            ("Swap Free", "--"),
-            ("Swap Usage", "--"),
-        ]
-
-        for row, (metric_name, metric_value) in enumerate(memory_metrics):
-            self.memory_table.setItem(row, 0, QTableWidgetItem(metric_name))
-            self.memory_table.setItem(row, 1, QTableWidgetItem(str(metric_value)))
-
-        self.memory_table.verticalHeader().setVisible(False)
-        self.memory_table.horizontalHeader().setStretchLastSection(True)
-        memory_layout.addWidget(self.memory_table)
-
-        # Disk tab setup
-        disk_widget = QWidget()
-        disk_layout = QVBoxLayout(disk_widget)
-        self.disk_table = QTableWidget()
-        disk_metrics = [
-            ("Total Disk Space", "--"),
-            ("Used Disk Space", "--"),
-            ("Free Disk Space", "--"),
-            ("Disk Usage", "--"),
-            ("Read Count", "--"),
-            ("Write Count", "--"),
-            ("Read Bytes", "--"),
-            ("Write Bytes", "--"),
-            ("Read Time", "--"),
-            ("Write Time", "--"),
-        ]
-        self.disk_table.setRowCount(len(disk_metrics))
-        self.disk_table.setColumnCount(2)
-        self.disk_table.setHorizontalHeaderLabels(["Metric", "Value"])
-
-        disk_header = self.disk_table.horizontalHeader()
-        for i in range(self.disk_table.columnCount()):
-            disk_header.setSectionResizeMode(i, QHeaderView.Stretch)
-
-        for row, (metric_name, metric_value) in enumerate(disk_metrics):
-            self.disk_table.setItem(row, 0, QTableWidgetItem(metric_name))
-            self.disk_table.setItem(row, 1, QTableWidgetItem(str(metric_value)))
-
-        self.disk_table.verticalHeader().setVisible(False)
-        self.disk_table.horizontalHeader().setStretchLastSection(True)
-        disk_layout.addWidget(self.disk_table)
-
-        #Battery details tab
-        battery_widget = QWidget()
-        battery_layout = QVBoxLayout(battery_widget)
-        self.battery_table = QTableWidget()
-        self.battery_table.setRowCount(3)
-        self.battery_table.setColumnCount(2)
-        self.battery_table.setHorizontalHeaderLabels(["Metric", "Value"])
-
-        battery_header = self.battery_table.horizontalHeader()
-        for i in range(self.battery_table.columnCount()):
-            battery_header.setSectionResizeMode(i, QHeaderView.Stretch)
-
-        battery_metrics = [
-            ("Battery Percentage", "--"),
-            ("Status", "--"),
-            ("Total Time Remaining", "--"),
-        ]
-        for row, (metric_name, metric_value) in enumerate(battery_metrics):
-            self.battery_table.setItem(row, 0, QTableWidgetItem(metric_name))
-            self.battery_table.setItem(row, 1, QTableWidgetItem(str(metric_value)))
-
-        self.battery_table.verticalHeader().setVisible(False)
-        self.battery_table.horizontalHeader().setStretchLastSection(True)
-        battery_layout.addWidget(self.battery_table)
-
-        #Network details tab
-        network_widget = QWidget()
-        network_layout = QVBoxLayout(network_widget)
-        self.network_table = QTableWidget()
-        self.network_table.setRowCount(4)
-        self.network_table.setColumnCount(2)
-        self.network_table.setHorizontalHeaderLabels(["Metric", "Value"])
-
-        network_header = self.network_table.horizontalHeader()
-        for i in range(self.network_table.columnCount()):
-            network_header.setSectionResizeMode(i, QHeaderView.Stretch)
-
-        # Populate the table with network details
-        network_metrics = [
-            ("Upload Speed", "--"),
-            ("Download Speed", "--"),
-            ("Total Data Sent", "--"),
-            ("Total Data Received", "--"),
-        ]
-
-        for row, (metric_name, metric_value) in enumerate(network_metrics):
-            self.network_table.setItem(row, 0, QTableWidgetItem(metric_name))
-            self.network_table.setItem(row, 1, QTableWidgetItem(str(metric_value)))
-
-        self.network_table.verticalHeader().setVisible(False)
-        self.network_table.horizontalHeader().setStretchLastSection(True)
-        network_layout.addWidget(self.network_table)
-
-        #Settings tab
+    def _setup_settings_tab(self, tabs: QTabWidget) -> None:
+        """Setup settings tab"""
         self.settings_widget = QWidget()
-        self.settings_layout = QVBoxLayout(self.settings_widget)
-
-        #background running option
-        background_group = QGroupBox("Background Running")
-        background_layout = QVBoxLayout()
-        self.background_checkbox = QCheckBox("Run in background")
-        self.background_checkbox.setChecked(True)
-
-        background_layout.addWidget(self.background_checkbox)
-        background_group.setLayout(background_layout)
-
-        #Theme selection
+        settings_layout = QVBoxLayout(self.settings_widget)
+        
+        # Theme selection
         theme_group = QGroupBox("Theme")
-        theme_layout = QHBoxLayout()
-
+        theme_layout = QHBoxLayout(theme_group)
+        
         self.dark_button = QRadioButton("Dark Mode")
         self.dark_button.setChecked(True)
         self.dark_button.toggled.connect(self.set_dark_mode)
-        theme_layout.addWidget(self.dark_button)
-
+        
         self.light_button = QRadioButton("Light Mode")
         self.light_button.toggled.connect(self.set_light_mode)
+        
+        theme_layout.addWidget(self.dark_button)
         theme_layout.addWidget(self.light_button)
-
-        theme_group.setLayout(theme_layout)
-
-        # Command confirmation option
+        
+        # Command confirmation
         command_group = QGroupBox("Command Execution")
-        command_layout = QVBoxLayout()
+        command_layout = QVBoxLayout(command_group)
+        
         self.confirm_checkbox = QCheckBox("Require confirmation before executing commands")
-        self.confirm_checkbox.setChecked(src.assistant.config.FORCE_CONFIRM)  # Set initial state from config
+        self.confirm_checkbox.setChecked(self.FORCE_CONFIRM)
         self.confirm_checkbox.toggled.connect(self.toggle_command_confirmation)
-
         command_layout.addWidget(self.confirm_checkbox)
-        command_group.setLayout(command_layout)
+        
+        # Background running
+        background_group = QGroupBox("Background Running")
+        background_layout = QVBoxLayout(background_group)
+        
+        self.background_checkbox = QCheckBox("Run in background")
+        self.background_checkbox.setChecked(True)
+        background_layout.addWidget(self.background_checkbox)
+        
+        settings_layout.addWidget(theme_group)
+        settings_layout.addWidget(command_group)
+        settings_layout.addWidget(background_group)
+        settings_layout.addStretch()
+        
+        self.tabs.addTab(self.settings_widget, "Settings")
 
-        self.settings_layout.addWidget(background_group)
-        self.settings_layout.addWidget(theme_group)
-        self.settings_layout.addWidget(command_group)
-        self.settings_layout.addStretch()
-
-        # Nova Assistant tab
-        nova_widget = QWidget()
-        nova_layout = QVBoxLayout(nova_widget)
-
-        # Add title and description
-        nova_title = QLabel("Nova Virtual Assistant")
-        nova_title.setStyleSheet("font-size: 18px; font-weight: bold;")
-        nova_title.setAlignment(Qt.AlignCenter)
-
-        nova_description = QLabel("Nova is an intelligent system-command assistant that can help you with system tasks and answer questions.")
-        nova_description.setWordWrap(True)
-        nova_description.setAlignment(Qt.AlignCenter)
-
-        # Create visual feedback area (centered icon)
-        self.feedback_container = QWidget()
-        feedback_layout = QVBoxLayout(self.feedback_container)
-        self.assistant_icon = QLabel()
-        self.assistant_icon.setAlignment(Qt.AlignCenter)
-        self.set_assistant_state("idle")  # Set default state
-        feedback_layout.addWidget(self.assistant_icon)
-
-        # Create conversation display (replacing table widget)
-        self.nova_conversation = QTextEdit()
-        self.nova_conversation.setReadOnly(True)
-        self.nova_conversation.setMinimumHeight(200)
-        self.nova_conversation.setStyleSheet("""
-            QTextEdit {
-                border: 1px solid #3c3c3c;
-                border-radius: 8px;
-                padding: 8px;
-                background-color: #2d2d2d;
-            }
-        """)
-
-        # Create input field and buttons
-        input_container = QWidget()
-        input_layout = QHBoxLayout(input_container)
-        input_layout.setContentsMargins(0, 10, 0, 0)
-
-        self.nova_input = QLineEdit()
-        self.nova_input.setPlaceholderText("Type your command or question here...")
-        self.nova_input.returnPressed.connect(self.send_nova_command)
-
-        self.nova_send_button = QPushButton("Send")
-        self.nova_send_button.clicked.connect(self.send_nova_command)
-
-        self.nova_voice_button = QPushButton("Voice Mode")
-        self.nova_voice_button.clicked.connect(self.toggle_nova_voice_mode)
-
-        self.nova_history_button = QPushButton("History")
-        self.nova_history_button.clicked.connect(self.show_nova_history)
-
-        input_layout.addWidget(self.nova_input)
-        input_layout.addWidget(self.nova_send_button)
-        input_layout.addWidget(self.nova_voice_button)
-        input_layout.addWidget(self.nova_history_button)
-
-        # Add status indicator
-        self.nova_status = QLabel("Nova is ready. Type a command or question.")
-        self.nova_status.setAlignment(Qt.AlignCenter)
-
-        # Add all widgets to the layout
-        nova_layout.addWidget(nova_title)
-        nova_layout.addWidget(nova_description)
-        nova_layout.addWidget(self.feedback_container)
-        nova_layout.addWidget(self.nova_conversation)
-        nova_layout.addWidget(input_container)
-        nova_layout.addWidget(self.nova_status)
-
-        #read only
-        self.process_table.setEditTriggers(QTableWidget.NoEditTriggers)
-        self.cpu_table.setEditTriggers(QTableWidget.NoEditTriggers)
-        self.memory_table.setEditTriggers(QTableWidget.NoEditTriggers)
-        self.disk_table.setEditTriggers(QTableWidget.NoEditTriggers)
-        self.network_table.setEditTriggers(QTableWidget.NoEditTriggers)
-        self.battery_table.setEditTriggers(QTableWidget.NoEditTriggers)
-
-        # add all tabs and load set_dark_mode by default
-        self.set_dark_mode()
-        tabs.addTab(overview_widget, "Overview")
-        tabs.addTab(nova_widget, "Nova Assistant")
-        tabs.addTab(cpu_widget, "CPU Details")
-        tabs.addTab(memory_widget, "Memory Details")
-        tabs.addTab(disk_widget, "Disk Details")
-        tabs.addTab(network_widget, "Network Details")
-        tabs.addTab(anomaly_widget, "Anomaly Detection")
-        tabs.addTab(battery_widget, "Battery Details")
-        tabs.addTab(processes_widget, "Processes")
-        tabs.addTab(self.settings_widget, "Settings")
-
-    def set_assistant_state(self, state):
-        if getattr(self, "_assistant_state_set", False):
-            return  # Already set, don't run again
-        self._assistant_state_set = True  # Mark as run
-
-        """Set the assistant icon (animated) based on the current state"""
-        icon_size = QSize(160, 160)
-
-        # Stop any previous movie
-        if hasattr(self, "_assistant_movie") and self._assistant_movie:
-            self._assistant_movie.stop()
-
-        # Path to your animations
-        path = f"assets/animations/nova_idle.gif"
-
-        # Fallback to idle if file missing
-        if not QPixmap(path).isNull():
-            movie = QMovie(path)
-            movie.setScaledSize(icon_size)
-            self.assistant_icon.setMovie(movie)
-            movie.start()
-            self._assistant_movie = movie
-        else:
-            # Fallback to a static PNG
-            pix = QPixmap(f"assets/animations/nova_idle.png").scaled(icon_size)
-            self.assistant_icon.setPixmap(pix)
-            self._assistant_movie = None
-
-        # Adjust colors if needed (for SVGs or tinted pixmaps)
-        icon_color = "#ffffff" if self.dark_button.isChecked() else "#000000"
-        self.assistant_icon.setStyleSheet(f"background: transparent; color: {icon_color};")
-
-    def animate_audio_reaction(self, level):
-        """Animate the assistant icon based on audio levels (for future implementation)"""
-        # This would animate the icon based on audio input level
-        # Placeholder for future implementation
-        # Could adjust size, color, or swap images based on audio level
-        pass
-
-    def initialize_nova(self):
-        self.command_executor = CommandExecutor()
-        self.command_executor.command_finished.connect(self.on_command_finished)
-
-    def on_command_finished(self, user_query, command, result, os_distro):
-        self.add_nova_message("Nova", summarize_output(user_query, command, result, os_distro))
-
-    def send_nova_command(self):
-        """Send a command to Nova assistant using thread-safe approach"""
-        user_input = self.nova_input.text().strip()
-        if not user_input:
-            return
-
-        # Clear input field
-        self.nova_input.clear()
-
-        # Add user message to output
-        self.add_nova_message("You", user_input)
-
-        # Create worker and thread
-        self.nova_thread = QThread()
-        self.nova_worker = NovaWorker(user_input, self.os_distro)
-        self.nova_worker.moveToThread(self.nova_thread)
-
-        # Connect signals and slots
-        self.nova_worker.status_update.connect(self.nova_status.setText)
-        self.nova_worker.state_update.connect(self.set_assistant_state)
-        self.nova_worker.message_update.connect(self.add_nova_message)
-        self.nova_worker.speak_signal.connect(self.speak_text)
-        self.nova_worker.confirmation_needed.connect(lambda cmd, os, user: self.handle_command_confirmation(cmd, os, user))
-        self.nova_worker.finished.connect(self.nova_thread.quit)
-        self.nova_worker.finished.connect(self.nova_worker.deleteLater)
-        self.nova_thread.finished.connect(self.nova_thread.deleteLater)
-
-        # Start processing when thread starts
-        self.nova_thread.started.connect(self.nova_worker.process_command)
-
-        # Start the thread
-        self.nova_thread.start()
-
-    def process_nova_command(self, user_input):
-        """Process Nova command in a separate thread"""
-        # Get OS distribution
-        os_distro = self.os_distro  # You can make this configurable
-
-        # Update UI to show processing state
-        self.nova_status.setText("Processing your request...")
-        self.set_assistant_state("processing")
-
+    def _cleanup_nova_worker(self) -> None:
+        """Clean up Nova worker and thread safely"""
         try:
-            # Query LLM
-            raw = query_llm(user_input, os_distro)
+            # Clean up worker
+            if hasattr(self, 'nova_worker') and self.nova_worker is not None:
+                try:
+                    self.nova_worker.deleteLater()
+                except RuntimeError:
+                    pass  # Already deleted
+                self.nova_worker = None
+            
+            # Clean up thread after a small delay to ensure worker is cleaned up first
+            QTimer.singleShot(100, self._cleanup_nova_thread)
+            
+        except Exception as e:
+            print(f"Error cleaning up Nova worker: {e}")
 
-            # Parse response
-            try:
-                cmd = parse_response(raw)
-            except ValueError as e:
-                response = f"Error parsing response: {e}"
-                self.add_nova_message("Nova", response)
-                self.speak_text(response)
-                self.nova_status.setText("Nova is ready. Type a command or question.")
-                self.set_assistant_state("error")
-                time.sleep(1)
-                self.set_assistant_state("idle")
-                return
-
-            # Handle command or conversation
-            if cmd["type"] == "command":
-                if src.assistant.config.USE_SAFE_FLAG and not is_safe(cmd):
-                    response = "Sorry, that command is not allowed for security reasons."
-                    self.add_nova_message("Nova", response)
-                    self.speak_text(response)
-                    self.nova_status.setText("Nova is ready. Type a command or question.")
-                    self.set_assistant_state("error")
-                    time.sleep(1)
-                    self.set_assistant_state("idle")
+    def _cleanup_nova_thread(self) -> None:
+        """Clean up Nova thread safely"""
+        try:
+            if hasattr(self, 'nova_thread') and self.nova_thread is not None:
+                try:
+                    if not self.nova_thread.isFinished():
+                        self.nova_thread.quit()
+                        self.nova_thread.wait(1000)
+                    self.nova_thread.deleteLater()
+                except RuntimeError:
+                    pass  # Already deleted
+                self.nova_thread = None
+                
+        except Exception as e:
+            print(f"Error cleaning up Nova thread: {e}")
+            
+    def switch_to_nova_tab(self) -> None:
+        """Switch to Nova Assistant tab programmatically"""
+        try:
+            # Find the Nova tab index and switch to it
+            for i in range(self.tabs.count() if hasattr(self, 'tabs') else 0):
+                tab_text = self.tabs.tabText(i).lower()
+                if 'nova' in tab_text or 'assistant' in tab_text:
+                    self.tabs.setCurrentIndex(i)
+                    print("Switched to Nova Assistant tab")
                     return
-
-                # Ask for confirmation
-                if src.assistant.config.FORCE_CONFIRM:
-                    # Update UI state while waiting for confirmation
-                    self.nova_status.setText("Waiting for confirmation...")
-                    self.set_assistant_state("idle")
-
-                    # Use a signal to ask for confirmation in the main thread
-                    confirmation = self.ask_confirmation(f"Execute {cmd['action']} → {cmd['target']}?")
-                    if not confirmation:
-                        response = "Command cancelled."
-                        self.add_nova_message("Nova", response)
-                        self.speak_text(response)
-                        self.nova_status.setText("Nova is ready. Type a command or question.")
-                        return
-
-                    # Restore processing state
-                    self.nova_status.setText("Executing command...")
-                    self.set_assistant_state("processing")
-
-                # Initialize result variable before try block
-                result = None
-
-                try:
-                    # Execute command
-                    result = execute(cmd)
-
-                    # Summarize result
-                    if result:
-                        summary = summarize_output(
-                            user_query=user_input,
-                            command=cmd["target"],
-                            output=result,
-                            os_distro=os_distro
-                        )
-                        self.add_nova_message("Nova", summary)
-                        self.set_assistant_state("speaking")
-                        self.speak_text(summary)
-                    else:
-                        response = "Command executed successfully."
-                        self.add_nova_message("Nova", response)
-                        self.set_assistant_state("speaking")
-                        self.speak_text(response)
-                except Exception as e:
-                    response = f"Error executing command: {e}"
-                    self.add_nova_message("Nova", response)
-                    self.set_assistant_state("error")
-                    self.speak_text(response)
-
-            elif cmd["type"] == "conversation":
-                self.add_nova_message("Nova", cmd["response"])
-                self.set_assistant_state("speaking")
-                self.speak_text(cmd["response"])
-
+            print("Nova Assistant tab not found")
         except Exception as e:
-            response = f"An error occurred: {e}"
-            self.add_nova_message("Nova", response)
-            self.set_assistant_state("error")
-            self.speak_text(response)
+            print(f"Error switching to Nova tab: {e}")
 
-        finally:
-            # Delay returning to idle state until after speaking
-            self.nova_status.setText("Nova is ready. Type a command or question.")
-            time.sleep(0.5)
-            self.set_assistant_state("idle")
-
-    def add_nova_message(self, source, message):
-        """Add a message to the Nova conversation display"""
-        timestamp = time.strftime("%H:%M:%S")
-
-        # Format message based on source
-        colors = STYLE_SHEET['dark' if self.dark_button.isChecked() else 'light']
-
-        if source == "You":
-            bubble_color = colors['user_bubble']
-        else:
-            bubble_color = colors['assistant_bubble']
-
-        self.nova_conversation.append(
-            f'<div style="margin: 10px 0; color: {colors["nova_text"]};">'
-            f'<span style="color: {colors["axis_labels"]}; font-size: 10px;">{time.strftime("%H:%M:%S")}</span><br>'
-            f'<span style="font-weight: bold; color: {bubble_color};">{source}: </span>'
-            f'<span style="color: {colors["nova_text"]};">{message}</span>'
-            f'</div>'
-        )
-
-        # Auto-scroll to the bottom
-        self.nova_conversation.verticalScrollBar().setValue(
-            self.nova_conversation.verticalScrollBar().maximum()
-        )
-
-        # Store in history
-        self.store_message_in_history(source, message)
-
-    def store_message_in_history(self, source, message):
-        """Store message in history for later retrieval"""
-        if not hasattr(self, 'nova_history'):
-            self.nova_history = []
-
-        timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
-        self.nova_history.append({
-            "timestamp": timestamp,
-            "source": source,
-            "message": message
-        })
-
-        # save to a file
-        # self.save_nova_history()
-
-    def show_nova_history(self):
-        """Show dialog with conversation history"""
-        if not hasattr(self, 'nova_history') or not self.nova_history:
-            QMessageBox.information(self, "History", "No conversation history available.")
-            return
-
-        # Create a new dialog
-        history_dialog = QDialog(self)
-        history_dialog.setWindowTitle("Nova Conversation History")
-        history_dialog.setMinimumSize(600, 400)
-
-        # Dialog layout
-        layout = QVBoxLayout(history_dialog)
-
-        # Create history list widget
-        history_list = QListWidget()
-        history_list.setAlternatingRowColors(True)
-
-        # Get the current theme colors
-        colors = STYLE_SHEET['dark' if self.dark_button.isChecked() else 'light']
-
-        # Group conversations by date
-        conversations = {}
-        for entry in self.nova_history:
-            date = entry["timestamp"].split()[0]
-            if date not in conversations:
-                conversations[date] = []
-            conversations[date].append(entry)
-
-        # Add conversations to list widget
-        for date, entries in sorted(conversations.items(), reverse=True):
-            date_item = QListWidgetItem(f"=== {date} ===")
-            date_item.setBackground(QColor(colors['history_date_bg']))
-            date_item.setForeground(QColor(colors['history_date_text']))
-            date_item.setTextAlignment(Qt.AlignCenter)
-            history_list.addItem(date_item)
-
-            for entry in entries:
-                time = entry["timestamp"].split()[1]
-                item_text = f"{time} - {entry['source']}: {entry['message']}"
-                item = QListWidgetItem(item_text)
-
-                # Style based on source
-                if entry["source"] == "You":
-                    item.setForeground(QColor(colors['user_message']))
-                elif entry["source"] == "Nova":
-                   item.setForeground(QColor(colors['assistant_message']))
-                else:
-                    item.setForeground(QColor(255, 170, 85))
-
-                history_list.addItem(item)
-
-        # Add buttons
-        button_container = QWidget()
-        button_layout = QHBoxLayout(button_container)
-
-        clear_button = QPushButton("Clear History")
-        clear_button.clicked.connect(lambda: self.clear_nova_history(history_dialog, history_list))
-
-        close_button = QPushButton("Close")
-        close_button.clicked.connect(history_dialog.accept)
-
-        button_layout.addWidget(clear_button)
-        button_layout.addStretch()
-        button_layout.addWidget(close_button)
-
-        # Add widgets to dialog
-        layout.addWidget(history_list)
-        layout.addWidget(button_container)
-
-        # Show dialog
-        history_dialog.exec_()
-
-    def clear_nova_history(self, dialog, list_widget):
-        """Clear the conversation history"""
-        reply = QMessageBox.question(
-            dialog,
-            "Clear History",
-            "Are you sure you want to clear all conversation history?",
-            QMessageBox.Yes | QMessageBox.No,
-            QMessageBox.No
-        )
-
-        if reply == QMessageBox.Yes:
-            self.nova_history = []
-            list_widget.clear()
-            QMessageBox.information(dialog, "History", "Conversation history cleared.")
-
-
-    def ask_confirmation(self, message):
-        """Ask for confirmation in a dialog"""
-        reply = QMessageBox.question(self, 'Confirmation', message,
-                                    QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
-        return reply == QMessageBox.Yes
-
-    def toggle_nova_voice_mode(self):
-        """Toggle Nova voice command mode"""
-        if self.nova_voice_button.text() == "Voice Mode":
-            # Enable voice mode
-            self.nova_voice_button.setText("Stop Voice")
-            self.nova_status.setText("Voice mode active. Speak your commands.")
-            self.VOICE_MODE = True  # Set the flag explicitly
-            self.set_assistant_state("listening")
-            threading.Thread(target=self.start_nova_voice_mode, daemon=True).start()
-        else:
-            # Disable voice mode
-            self.nova_voice_button.setText("Voice Mode")
-            self.nova_status.setText("Voice mode deactivated.")
-            self.VOICE_MODE = False  # Set the flag explicitly
-            self.set_assistant_state("idle")
-
-    def process_cpu_command(self, user_input):
-        """Process CPU information commands safely"""
-        os_distro = self.os_distro
-
+    def quit_application(self) -> None:
+        """Quit the application completely - called by system tray"""
         try:
-            # Update UI
-            self.set_assistant_state("processing")
-            self.nova_status.setText("Processing CPU information request...")
-
-            # Directly execute inxi command
-            command = {
-                "type": "command",
-                "action": "run_command",
-                "target": "inxi -C",  # Use -C flag for CPU info
-                "confirm": False,
-                "safe": True
-            }
-
-            # Execute with proper error handling
-            try:
-                result = execute(command)
-                summary = summarize_output("inxi -C", result, os_distro)
-
-                # Update UI in the main thread
-                self.add_nova_message("Nova", summary)
-                self.set_assistant_state("speaking")
-
-                # Speak the result
-                self.speak_text(summary)
-            except Exception as e:
-                response = f"Error retrieving CPU information: {e}"
-                self.add_nova_message("Nova", response)
-                self.set_assistant_state("error")
-                self.speak_text(response)
-
+            # Hide system tray first
+            if hasattr(self, 'system_tray') and self.system_tray:
+                self.system_tray.hide_tray_icon()
+            
+            # Close the application
+            QApplication.quit()
+            
         except Exception as e:
-            self.add_nova_message("Nova", f"An error occurred: {e}")
-            self.set_assistant_state("error")
-        finally:
-            # Reset UI state
-            self.nova_status.setText("Nova is ready. Type a command or question.")
+            print(f"Error during application quit: {e}")        
 
-    def start_nova_voice_mode(self):
-        """Start Nova voice command mode in a separate thread"""
-        # Only proceed if voice mode is active
-        if not self.VOICE_MODE:
-            return
-
-        # Add voice feedback when voice mode is activated
-        self.speak_text("Voice mode activated. Speak your commands.")
-
-        recognizer = sr.Recognizer()
-
-        # Create microphone instance outside the loop
-        mic = sr.Microphone()
-
-        # Initial noise adjustment
-        with mic as source:
-            # Allow more time for ambient noise calibration
-            recognizer.adjust_for_ambient_noise(source, duration=1.0)
-
-        # Continue as long as we're in voice mode
-        while self.VOICE_MODE and self.nova_voice_button.text() == "Stop Voice":
+    def _cleanup_threads(self):
+        """Helper method to cleanup all threads"""
+        # Nova thread cleanup
+        if hasattr(self, 'nova_thread') and self.nova_thread is not None:
             try:
-                # Wait for any ongoing speech to complete
-                if self.is_speaking:
-                    time.sleep(0.1)  # Small delay to prevent CPU thrashing
-                    continue
-
-                with mic as source:
-                    # Only enter listening state when not speaking
-                    if not self.is_speaking:
-                        self.set_assistant_state("listening")
-                        self.add_nova_message("System", "Listening...")
-
-                        # Add timeout to prevent indefinite listening
-                        audio = recognizer.listen(source, timeout=5, phrase_time_limit=8)
-
-                        # Check if still in voice mode
-                        if not self.VOICE_MODE:
-                            break
-
-                        # Process the audio
-                        self.set_assistant_state("processing")
-                        self.nova_status.setText("Processing speech...")
-
-                        text = recognizer.recognize_google(audio).lower()
-
-                        if text:
-                            # Check if still in voice mode
-                            if not self.VOICE_MODE:
-                                break
-
-                            self.add_nova_message("You", text)
-
-                            # Process the command
-                            self.process_nova_command(text)
-
-                            # Exit voice mode if "stop" was said
-                            if text.lower() == "stop":
-                                self.VOICE_MODE = False
-                                self.nova_voice_button.setText("Voice Mode")
-                                self.nova_status.setText("Voice mode deactivated.")
-                                self.speak_text("Voice mode deactivated.")
-                                break
-
-            except sr.WaitTimeoutError:
-                # Just continue if timeout occurs
-                continue
-            except sr.UnknownValueError:
-                # Only show error if we're not speaking and still in voice mode
-                if not self.is_speaking and self.VOICE_MODE:
-                    self.add_nova_message("System", "Sorry, could not understand.")
-                    self.speak_text("Sorry, could not understand.")
-            except Exception as e:
-                if self.VOICE_MODE:
-                    self.add_nova_message("System", f"Error: {e}")
-                    print(f"Voice recognition error: {e}")
-
-            # Small pause between recognition attempts
-            time.sleep(0.2)
-
-            # Check if we've exited voice mode
-            if not self.VOICE_MODE or self.nova_voice_button.text() != "Stop Voice":
-                break
-
-    def handle_command_confirmation(self, cmd, os_distro, user_input):
-        """Handle confirmation for commands in the main thread"""
-        confirmation = self.ask_confirmation(f"Execute {cmd['action']} → {cmd['target']}?")
-
-        if confirmation:
-            # Create a new worker to execute the confirmed command
-            self.execute_worker = NovaWorker("", os_distro)
-            self.execute_worker.status_update.connect(self.nova_status.setText)
-            self.execute_worker.state_update.connect(self.set_assistant_state)
-            self.execute_worker.message_update.connect(self.add_nova_message)
-            self.execute_worker.speak_signal.connect(self.speak_text)
-            self.execute_worker.finished.connect(self.execute_worker.deleteLater)
-
-            # Execute the command directly using a method in the worker
-            result = execute(cmd)
-
-            # Process the result
-            if result:
-                summary = summarize_output(
-                    user_query=user_input,
-                    command=cmd["target"],
-                    output=result,
-                    os_distro=os_distro
-                )
-
-                # summary = summarize_output(user_query: str, command: str, output: str, os_distro: str)
-                self.add_nova_message("Nova", summary)
-                self.set_assistant_state("speaking")
-                self.speak_text(summary)
-            else:
-                response = "Command executed successfully."
-                self.add_nova_message("Nova", response)
-                self.set_assistant_state("speaking")
-                self.speak_text(response)
-        else:
-            # Command was rejected
-            response = "Command cancelled."
-            self.add_nova_message("Nova", response)
-            self.set_assistant_state("idle")
-            self.speak_text(response)
-
-        self.nova_status.setText("Nova is ready. Type a command or question.")
-
-    def speak_text(self, text: str):
-        """Generate speech using edge-tts and block listening during speech"""
-        # Skip if text is empty
-        if not text:
-            return
-
-        # List of special messages that should always be spoken
-        special_messages = [
-            "Voice mode activated. Speak your commands.",
-            "Voice mode deactivated.",
-            "Sorry, could not understand."
-        ]
-
-        # Only speak if voice mode is active or if it's a special message
-        if not self.VOICE_MODE and text not in special_messages:
-            return
-
-        # Set speaking state
-        self.is_speaking = True
-        self.speech_event.clear()  # Mark speech as in progress
-        self.set_assistant_state("speaking")
-
-        def run_tts():
+                if self.nova_thread.isRunning():
+                    self.nova_thread.quit()
+                    if not self.nova_thread.wait(3000):
+                        self.nova_thread.terminate()
+                        self.nova_thread.wait(1000)
+            except RuntimeError:
+                pass
+            self.nova_thread = None
+            self.nova_worker = None
+                
+        # TTS thread cleanup
+        if hasattr(self, 'tts_thread') and self.tts_thread is not None:
             try:
-                # Create a new event loop for the thread
-                loop = asyncio.new_event_loop()
-                asyncio.set_event_loop(loop)
-
-                # Run the TTS coroutine
-                loop.run_until_complete(self._tts_coroutine(text))
-            except Exception as e:
-                print(f"TTS Thread Error: {e}")
-            finally:
-                # Reset speaking state
-                self.is_speaking = False
-                self.speech_event.set()  # Mark speech as completed
-
-                # Update UI state from main thread
-                QTimer.singleShot(0, lambda: self.set_assistant_state("idle"))
-                QTimer.singleShot(0, lambda: self.nova_status.setText("Nova is ready. Type a command or question."))
-
-        # Run in a separate thread
-        threading.Thread(target=run_tts, daemon=True).start()
-
-    async def _tts_coroutine(self, text: str):
-        """Async coroutine for text-to-speech"""
-        tmp_path = None
-
-        try:
-            communicate = edge_tts.Communicate(text, voice="en-US-AriaNeural")
-
-            # Create a temporary file to save the audio
-            with tempfile.NamedTemporaryFile(delete=False, suffix=".mp3") as tmp_file:
-                tmp_path = tmp_file.name
-
-            # Generate audio file
-            await communicate.save(tmp_path)
-
-            # Play the audio using the system command (blocking call)
-            os.system(f'play "{tmp_path}"')
-
-            # Add small delay to ensure audio is completely finished
-            await asyncio.sleep(0.3)
-
-        except Exception as e:
-            # Log the error
-            print(f"TTS Error: {e}")
-        finally:
-            # Clean up temporary file
-            if tmp_path and os.path.exists(tmp_path):
-                try:
-                    os.unlink(tmp_path)
-                except:
-                    pass
-
-    def toggle_command_confirmation(self, state):
-        """Toggle whether commands require confirmation before execution"""
-        src.assistant.config.FORCE_CONFIRM = state
-
-        # Provide user feedback
-        status = "enabled" if state else "disabled"
-        self.add_nova_message("System", f"Command confirmation {status}.")
-
-    def save_assistant_config(self):
-        """Save assistant configuration to file"""
-        try:
-            config = {
-                'force_confirm': src.assistant.config.FORCE_CONFIRM,
-                'use_safe_flag': src.assistant.config.USE_SAFE_FLAG
-            }
-
-            with open('config/assistant_config.yaml', 'w') as file:
-                yaml.dump(config, file)
-
-        except Exception as e:
-            print(f"Error saving assistant config: {e}")
-
-    def toggle_process_view(self):
-        self.show_all_processes = not self.show_all_processes
-        self.show_all_button.setText("Show Less" if self.show_all_processes else "Show More")
-        # Trigger table update with current data
-        self.update_process_table(self.current_processes)
-
-    def update_metrics(self, metrics):
-        # Update labels
-        self.memory_label.setText(f"Memory Usage: {metrics['memory']['percent']}%")
-        self.disk_label.setText(f"Disk Usage: {metrics['disk']['percent']}%")
-        self.network_label.setText(f"Network Usage: {metrics['network']['upload_speed']}kbps")
-        self.cpu_percent.setText(f"CPU Usage: {metrics['cpu']['cpu_percent']}%")
-
-        # Update graph data
-        self.cpu_series.append(self.data_points, metrics['cpu']['cpu_percent'])
-        self.memory_series.append(self.data_points, metrics['memory']['percent'])
-        self.disk_series.append(self.data_points, metrics['disk']['percent'])
-        self.network_series.append(self.data_points, metrics['network']['upload_speed'])
-
-        # Update CPU tab
-        self.cpu_table.setItem(0, 1, QTableWidgetItem(f"{metrics['cpu']['cpu_percent']}%"))
-        self.cpu_table.setItem(1, 1, QTableWidgetItem(f"{metrics['cpu']['cpu_freq']} MHz"))
-        self.cpu_table.setItem(2, 1, QTableWidgetItem(f"{metrics['cpu']['cpu_count_logical']}"))
-        self.cpu_table.setItem(3, 1, QTableWidgetItem(f"{metrics['cpu']['cpu_count_physical']}"))
-        self.cpu_table.setItem(4, 1, QTableWidgetItem(f"{metrics['cpu']['cpu_load_avg_1min']}"))
-        self.cpu_table.setItem(5, 1, QTableWidgetItem(f"{metrics['cpu']['cpu_context_switches']}"))
-        self.cpu_table.setItem(6, 1, QTableWidgetItem(f"{metrics['cpu']['cpu_interrupts']}"))
-        self.cpu_table.setItem(7, 1, QTableWidgetItem(f"{metrics['cpu']['cpu_syscalls']}"))
-        self.cpu_table.setItem(8, 1, QTableWidgetItem(f"{metrics['cpu']['cpu_user_time']}s"))
-        self.cpu_table.setItem(9, 1, QTableWidgetItem(f"{metrics['cpu']['cpu_system_time']}s"))
-        self.cpu_table.setItem(10, 1, QTableWidgetItem(f"{metrics['cpu']['cpu_idle_time']}s"))
-        self.cpu_table.setItem(11, 1, QTableWidgetItem(f"{metrics['cpu']['cpu_temp']}\u00B0C"))
-
-        # Update memory tab
-        self.memory_table.setItem(0, 1, QTableWidgetItem(f"{metrics['memory']['total'] / (1024**2)/ 1024:.2f} GB" if metrics['memory']['total'] / (1024**2) > 1024 else f"{metrics['memory']['total'] / (1024**2):.2f} MB"))
-        self.memory_table.setItem(1, 1, QTableWidgetItem(f"{(metrics['memory']['available'] / (1024**2)) / 1024:.2f} GB" if metrics['memory']['available'] / (1024**2) > 1024 else f"{metrics['memory']['available'] / (1024**2):.2f} MB"))
-        self.memory_table.setItem(2, 1, QTableWidgetItem(f"{metrics['memory']['percent']}%"))
-        self.memory_table.setItem(3, 1, QTableWidgetItem(f"{(metrics['memory']['used'] / (1024**2)) / 1024:.2f} GB" if metrics['memory']['used'] / (1024**2) > 1024 else f"{metrics['memory']['used'] / (1024**2):.2f} MB"))
-        self.memory_table.setItem(4, 1, QTableWidgetItem(f"{metrics['memory']['swap_total'] / (1024**2) / 1024:.2f} GB" if metrics['memory']['swap_total'] / 1024 > 1 else f"{metrics['memory']['swap_total'] / (1024**2):.2f} MB"))
-        self.memory_table.setItem(5, 1, QTableWidgetItem(f"{metrics['memory']['swap_used'] / (1024**2) / 1024:.2f} GB" if metrics['memory']['swap_used'] / 1024 > 1 else f"{metrics['memory']['swap_used'] / (1024**2):.2f} MB"))
-        self.memory_table.setItem(6, 1, QTableWidgetItem(f"{metrics['memory']['swap_free'] / (1024**2) / 1024:.2f} GB" if metrics['memory']['swap_free'] / 1024 > 1 else f"{metrics['memory']['swap_free'] / (1024**2):.2f} MB"))
-        self.memory_table.setItem(7, 1, QTableWidgetItem(f"{metrics['memory']['swap_percent']}%"))
-
-        # Update disk tab
-        self.disk_table.setItem(0, 1, QTableWidgetItem(f"{metrics['disk']['total'] / (1024**2):.2f} MB" if metrics['disk']['total'] / (1024**2) <= 1024 else f"{metrics['disk']['total'] / (1024**2) / 1024:.2f} GB" if metrics['disk']['total'] / (1024**2) <= 1024**2 else f"{metrics['disk']['total'] / (1024**2) / 1024**2:.2f} TB"))
-        self.disk_table.setItem(1, 1, QTableWidgetItem(f"{metrics['disk']['used'] / (1024**2):.2f} MB" if metrics['disk']['used'] / (1024**2) <= 1024 else f"{metrics['disk']['used'] / (1024**2) / 1024:.2f} GB" if metrics['disk']['used'] / (1024**2) <= 1024**2 else f"{metrics['disk']['used'] / (1024**2) / 1024**2:.2f} TB"))
-        self.disk_table.setItem(2, 1, QTableWidgetItem(f"{metrics['disk']['free'] / (1024**2):.2f} MB" if metrics['disk']['free'] / (1024**2) <= 1024 else f"{metrics['disk']['free'] / (1024**2) / 1024:.2f} GB" if metrics['disk']['free'] / (1024**2) <= 1024**2 else f"{metrics['disk']['free'] / (1024**2) / 1024**2:.2f} TB"))
-        self.disk_table.setItem(3, 1, QTableWidgetItem(f"{metrics['disk']['percent']}%"))
-        self.disk_table.setItem(4, 1, QTableWidgetItem(f"{metrics['disk']['read_count']}"))
-        self.disk_table.setItem(5, 1, QTableWidgetItem(f"{metrics['disk']['write_count']}"))
-        self.disk_table.setItem(6, 1, QTableWidgetItem(f"{metrics['disk']['read_bytes'] / (1024**2) / 1024:.2f} GB" if metrics['disk']['read_bytes'] / (1024**2) > 1024 else f"{metrics['disk']['read_bytes'] / (1024**2):.2f} MB"))
-        self.disk_table.setItem(7, 1, QTableWidgetItem(f"{metrics['disk']['write_bytes'] / (1024**2) / 1024:.2f} GB" if metrics['disk']['write_bytes'] / (1024**2) > 1024 else f"{metrics['disk']['write_bytes'] / (1024**2):.2f} MB"))
-        self.disk_table.setItem(8, 1, QTableWidgetItem(f"{metrics['disk']['read_time'] / 1000:.2f} sec" if metrics['disk']['read_time'] >= 60000 else f"{metrics['disk']['read_time'] / 60000:.2f} min" if metrics['disk']['read_time'] >= 3600000 else f"{metrics['disk']['read_time']:.2f} ms"))
-        self.disk_table.setItem(9, 1, QTableWidgetItem(f"{metrics['disk']['write_time'] / 1000:.2f} sec" if metrics['disk']['write_time'] >= 60000 else f"{metrics['disk']['write_time'] / 60000:.2f} min" if metrics['disk']['write_time'] >= 3600000 else f"{metrics['disk']['write_time']:.2f} ms"))
-
-        #update network tab
-        self.network_table.setItem(0, 1, QTableWidgetItem(f"{metrics['network']['upload_speed'] / 1024:.2f} MB/s" if metrics['network']['upload_speed'] >= 1024 else f"{metrics['network']['upload_speed']} kb/s"))
-        self.network_table.setItem(1, 1, QTableWidgetItem(f"{metrics['network']['download_speed'] / 1024:.2f} MB/s" if metrics['network']['download_speed'] >= 1024 else f"{metrics['network']['download_speed']} kb/s"))
-        self.network_table.setItem(2, 1, QTableWidgetItem(f"{metrics['network']['total_data_sent'] / (1024**2):.2f} GB" if metrics['network']['total_data_sent'] >= 1024**2 else f"{metrics['network']['total_data_sent'] / 1024:.2f} MB" if metrics['network']['total_data_sent'] >= 1024 else f"{metrics['network']['total_data_sent']} kb"))
-        self.network_table.setItem(3, 1, QTableWidgetItem(f"{metrics['network']['total_data_received'] / (1024**2):.2f} GB" if metrics['network']['total_data_received'] >= 1024**2 else f"{metrics['network']['total_data_received'] / 1024:.2f} MB" if metrics['network']['total_data_received'] >= 1024 else f"{metrics['network']['total_data_received']} kb"))
-
-        #update battery tab
-        self.battery_table.setItem(0, 1, QTableWidgetItem(f"{metrics['battery']['battery_percentage']}%"))
-        self.battery_table.setItem(1, 1, QTableWidgetItem(f"{metrics['battery']['status']}"))
-        self.battery_table.setItem(2, 1, QTableWidgetItem(f"{metrics['battery']['time_remaining']}"))
-
-        if self.data_points > self.max_data_points:
-            self.cpu_series.remove(0)
-            self.memory_series.remove(0)
-            self.disk_series.remove(0)
-            self.network_series.remove(0)
-
-            for chart in [self.cpu_chart, self.memory_chart, self.disk_chart, self.network_chart]:
-                chart.axes(Qt.Horizontal)[0].setRange(self.data_points - self.max_data_points, self.data_points)
-        self.data_points += 1
-
-        #network
-        if metrics['network']['upload_speed'] > self.max_network_value:
-            self.max_network_value = metrics['network']['upload_speed']
-
-        buffer = self.max_network_value * 0.1
-        self.network_y.setRange(0, self.max_network_value + buffer)
-
-    def update_process_table(self, processes):
-        if not self.isVisible():
-            return
-
-        self.current_processes = processes
-        self.process_table.setUpdatesEnabled(False)
-
-        display_processes = processes if self.show_all_processes else [p for p in processes if p['cpu_percent'] > 0]
-        self.process_table.setRowCount(len(display_processes))
-
-        for row, process in enumerate(display_processes):
-            self.process_table.setItem(row, 0, QTableWidgetItem(process['name']))
-            self.process_table.setItem(row, 1, QTableWidgetItem(f"{process['status']}"))
-            self.process_table.setItem(row, 2, QTableWidgetItem(f"{process['cpu_percent']:.1f}"))
-            self.process_table.setItem(row, 3, QTableWidgetItem(f"{process['memory_percent']:.1f}"))
-            self.process_table.setItem(row, 4, QTableWidgetItem(f"{process['create_time']}"))
-
-        self.process_table.setUpdatesEnabled(True)
-
-    def on_detect_clicked(self):
-        """Trigger anomaly detection and update table."""
-        anomalies = detect_anomalies(OUTPUT_CSV, THRESHOLD_STEP)
-        self.update_anomaly_table(anomalies)
-
-    def update_anomaly_table(self, anomalies=None):
-        """Update the anomaly detection table with results"""
-        self.anomaly_table.setUpdatesEnabled(False)
-
-        # Clear existing rows
-        self.anomaly_table.setRowCount(0)
-
-        if anomalies is not None and not anomalies.empty:
-            # Update status label for anomaly
-            self.anomaly_status.setText("⚠️ Anomalies Detected!")
-            self.anomaly_status.setStyleSheet("""
-                QLabel {
-                    font-size: 16px;
-                    padding: 10px;
-                    border-radius: 5px;
-                    background-color: {colors['anomaly_status_bg']};
-                    color: white;
-                }
-            """)
-
-            # Update last run time
-            current_time = time.strftime("%Y-%m-%d %H:%M:%S")
-            self.last_run_time.setText(f"Last Run: {current_time}")
-
-            self.anomaly_table.setUpdatesEnabled(False)
-
-            # Add rows for detected anomalies
-            self.anomaly_table.setRowCount(len(anomalies))
-
-            for row, anomaly in enumerate(anomalies.itertuples()):
-                # Fill table with anomaly data
-                self.anomaly_table.setItem(row, 0, QTableWidgetItem(f"{anomaly[1]:.2f}"))
-                self.anomaly_table.setItem(row, 1, QTableWidgetItem(f"{anomaly[2]:.2f}"))
-                self.anomaly_table.setItem(row, 2, QTableWidgetItem(f"{anomaly[3]:.2f}"))
-                self.anomaly_table.setItem(row, 3, QTableWidgetItem(f"{anomaly[4]:.2f}"))
-                self.anomaly_table.setItem(row, 4, QTableWidgetItem("⚠️ Anomaly"))
-
-                # Set red color for anomaly rows
-                for col in range(self.anomaly_table.columnCount()):
-                    item = self.anomaly_table.item(row, col)
-                    item.setForeground(QBrush(QColor(255, 0, 0)))
-        else:
-            # Show normal status
-            self.anomaly_status.setText("System Status: Normal ✓")
-            self.anomaly_status.setStyleSheet("""
-                QLabel {
-                    font-size: 16px;
-                    padding: 10px;
-                    border-radius: 5px;
-                    background-color: {colors['anomaly_status_bg']};
-                    color: white;
-                }
-            """)
-            # Update last run time
-            current_time = time.strftime("%Y-%m-%d %H:%M:%S")
-            self.last_run_time.setText(f"Last Run: {current_time}")
-
-            self.anomaly_table.setUpdatesEnabled(False)
-
-        self.anomaly_table.setUpdatesEnabled(True)
-
+                if self.tts_thread.isRunning():
+                    self.tts_thread.quit()
+                    if not self.tts_thread.wait(3000):
+                        self.tts_thread.terminate()
+                        self.tts_thread.wait(1000)
+            except RuntimeError:
+                pass
+            self.tts_thread = None
+            self.tts_worker = None
 
     def closeEvent(self, event):
-        # Save assistant configuration
-        self.save_assistant_config()
-
-        if self.background_checkbox.isChecked():
-            # Minimize to tray instead of closing
-            event.ignore()
-            self.hide()
-        else:
-            event.accept()
-            sys.exit(0)
+        """Clean up threads on application close"""
+        # Stop voice mode
+        self.VOICE_MODE = False
+        
+        # Clean up TTS
+        if hasattr(self, 'tts_thread') and self.tts_thread and self.tts_thread.isRunning():
+            self.tts_thread.quit()
+            self.tts_thread.wait(3000)
+        
+        # Clean up Nova worker
+        if hasattr(self, 'nova_thread') and self.nova_thread and self.nova_thread.isRunning():
+            self.nova_thread.quit()
+            self.nova_thread.wait(3000)
+        
+        event.accept()

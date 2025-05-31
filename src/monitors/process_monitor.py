@@ -2,6 +2,16 @@ import psutil
 import yaml
 from datetime import datetime
 from heapq import nlargest
+import sys
+import os
+
+def get_resource_path(relative_path):
+    """Get the absolute path to bundled files when using PyInstaller."""
+    if getattr(sys, 'frozen', False):  # Running as a PyInstaller bundle
+        base_path = sys._MEIPASS
+    else:
+        base_path = os.path.abspath(".")
+    return os.path.join(base_path, relative_path)
 
 class ProcessMonitor:
     def __init__(self):
@@ -9,7 +19,7 @@ class ProcessMonitor:
         self.config = self.load_config()
 
     def load_config(self):
-        with open('config/config.yaml', 'r') as file:
+        with open(get_resource_path('config/config.yaml'), 'r') as file:
             return yaml.safe_load(file)
 
     def get_process_info(self, process):

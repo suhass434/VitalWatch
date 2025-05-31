@@ -1,7 +1,17 @@
 import logging
+import os
+import sys
+
+def get_resource_path(relative_path):
+    """Get the absolute path to bundled files when using PyInstaller."""
+    if getattr(sys, 'frozen', False):  # Running as a PyInstaller bundle
+        base_path = sys._MEIPASS
+    else:
+        base_path = os.path.abspath(".")
+    return os.path.join(base_path, relative_path)
 
 logging.basicConfig(
-    filename="src/assistant/assistant.log",
+    filename=get_resource_path("src/assistant/assistant.log"),
     level=logging.INFO,
     format="%(asctime)s %(levelname)s %(message)s"
 )
