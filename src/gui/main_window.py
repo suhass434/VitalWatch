@@ -219,7 +219,7 @@ class MainWindow(QMainWindow):
 
     def _init_properties(self) -> None:
         """Initialize window properties"""
-        self.font_size = 13
+        self.font_size = 10
         self.font = QFont("Arial", self.font_size)
         self.setFont(self.font)
         
@@ -340,11 +340,26 @@ class MainWindow(QMainWindow):
         """Set dark mode theme"""
         if hasattr(self, 'dark_button') and self.dark_button.isChecked():
             self.set_theme('dark')
+            self.fix_tab_sizing() 
 
     def set_light_mode(self) -> None:
         """Set light mode theme"""
         if hasattr(self, 'light_button') and self.light_button.isChecked():
             self.set_theme('light')
+            self.fix_tab_sizing() 
+
+    def fix_tab_sizing(self):
+        """Force tab widget to recalculate size after font/theme changes"""
+        if hasattr(self, 'tabs'):
+            # Force font metric recalculation
+            self.tabs.setFont(self.tabs.font())
+            # Clear cached size hints
+            self.tabs.updateGeometry()
+            # Process font change events
+            QApplication.processEvents()
+            # Resize to optimal size
+            self.tabs.adjustSize()
+            self.adjustSize()
 
     def load_config(self) -> Dict[str, Any]:
         """Load configuration - wrapper for module function"""
@@ -870,34 +885,31 @@ class MainWindow(QMainWindow):
         except Exception as e:
             print(f"Error updating process table: {e}")
 
-    def update_anomaly_table(self, anomalies: List[Dict[str, Any]]) -> None:
-        """Update the anomaly table with detected anomalies - thread-safe"""
+    def update_anomaly_table(self, anomalies: list) -> None:
+        """Update the anomaly detection table with new results"""
         try:
-            if not hasattr(self, 'anomaly_table'):
-                print("Anomaly table widget not found")
-                return
+            if hasattr(self, 'anomaly_table'):
+                self.anomaly_table.setRowCount(len(anomalies))
                 
-            # Clear existing rows
-            self.anomaly_table.setRowCount(0)
-            
-            if not anomalies:
-                return
-                
-            # Set row count
-            self.anomaly_table.setRowCount(len(anomalies))
-            
-            # Populate table
-            for row, anomaly in enumerate(anomalies):
-                for col, (key, value) in enumerate(anomaly.items()):
-                    if col < self.anomaly_table.columnCount():
+                for row, anomaly in enumerate(anomalies):
+                    for col, (key, value) in enumerate(anomaly.items()):
                         item = QTableWidgetItem(str(value))
                         self.anomaly_table.setItem(row, col, item)
-                        
-            # Refresh the table display
-            self.anomaly_table.viewport().update()
-            
+                
+                # Update status
+                if hasattr(self, 'anomaly_status'):
+                    if anomalies:
+                        self.anomaly_status.setText(f"Found {len(anomalies)} anomalies")
+                    else:
+                        self.anomaly_status.setText("No anomalies detected")
+                
+                # Update timestamp
+                if hasattr(self, 'last_run_time'):
+                    current_time = time.strftime("%Y-%m-%d %H:%M:%S")
+                    self.last_run_time.setText(f"Last run: {current_time}")
+                    
         except Exception as e:
-            print(f"Error updating anomaly table: {e}")
+            logger.error(f"Error updating anomaly table: {e}")
 
     def toggle_process_view(self) -> None:
         """Toggle between showing all processes or limited view"""
@@ -1186,7 +1198,7 @@ class MainWindow(QMainWindow):
     def setup_ui(self) -> None:
         """Setup the complete UI"""
         self.setWindowTitle("VitalWatch - System Monitor")
-        self.setGeometry(100, 100, 1400, 900)
+        self.setGeometry(100, 100, 1230, 864)
         
         # Central widget and main layout
         central_widget = QWidget()

@@ -154,31 +154,25 @@ class VitalWatchApp(QObject):  # Inherit from QObject to use signals
         logger.info("Data collection task stopped")
     
     def anomaly_detection_task(self) -> None:
-        """Background task for periodic anomaly detection."""
         iteration_count = 0
         logger.info("Anomaly detection task started")
-
+        
         while not self.stopping_event.is_set():
-            # Replace the anomaly detection block:
             try:
                 iteration_count += 1
                 if iteration_count >= self.threshold_step:
                     logger.info("Executing anomaly detection cycle")
                     anomalies = detect_anomalies(self.output_csv, self.threshold_step)
                     
-                    # Ensure consistent data type emission
                     if anomalies is not None and hasattr(anomalies, 'empty') and not anomalies.empty:
-                        # Convert DataFrame to list of dictionaries
                         anomaly_list = anomalies.to_dict('records')
-                        # Emit using QMetaObject for thread safety
                         QMetaObject.invokeMethod(
-                            self, "anomalies_updated", 
+                            self, "anomalies_updated",
                             Qt.QueuedConnection,
                             Q_ARG(list, anomaly_list)
                         )
                         logger.info(f"Detected {len(anomalies)} anomalies")
                     else:
-                        # Always emit empty list
                         QMetaObject.invokeMethod(
                             self, "anomalies_updated", 
                             Qt.QueuedConnection,
@@ -186,10 +180,17 @@ class VitalWatchApp(QObject):  # Inherit from QObject to use signals
                         )
                         logger.debug("No anomalies detected")
                     iteration_count = 0
+                
+                # ADD THIS: Wait between iterations regardless of detection
+                if self.stopping_event.wait(timeout=self.config['monitoring']['interval']):
+                    break
+                    
             except Exception as e:
                 logger.error(f"Anomaly detection failed: {e}", exc_info=True)
-                # Always emit a list on error
                 self.anomalies_updated.emit([])
+                # Also add delay on error
+                if self.stopping_event.wait(timeout=self.config['monitoring']['interval']):
+                    break
 
     def monitoring_task(self) -> None:
         """Background task for monitoring system metrics and updating GUI."""
