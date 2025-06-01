@@ -31,6 +31,9 @@ SCHEMA = {
 }
 
 def parse_response(raw: str) -> dict:
+    """
+    Parse and validate LLM response JSON.
+    """
     try:
         data = json.loads(raw)
         validate(instance=data, schema=SCHEMA)

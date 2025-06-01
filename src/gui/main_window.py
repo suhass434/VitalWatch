@@ -8,6 +8,8 @@ from typing import Dict, Any, Optional, List
 import yaml
 import pandas as pd
 import edge_tts
+import subprocess
+import concurrent.futures
 
 from PyQt5.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, 
@@ -51,51 +53,6 @@ def load_config() -> Dict[str, Any]:
     with open(config_path, 'r') as file:
         return yaml.safe_load(file)
 
-
-class TTSWorker(QObject):
-    """Worker for non-blocking text-to-speech"""
-    finished = pyqtSignal()
-    error = pyqtSignal(str)
-    
-    def __init__(self, text: str, voice: str = "en-US-AriaNeural"):
-        super().__init__()
-        self.text = text
-        self.voice = voice
-    
-    async def speak_async(self) -> None:
-        """Convert text to speech asynchronously"""
-        try:
-            communicate = edge_tts.Communicate(self.text, self.voice)
-            tmp_audio = tempfile.NamedTemporaryFile(delete=False, suffix=".mp3")
-            await communicate.save(tmp_audio.name)
-            
-            # Use non-blocking subprocess instead of os.system
-            import subprocess
-            process = subprocess.Popen(
-                ['play', tmp_audio.name],
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL
-            )
-            
-            # Wait for audio to finish without blocking
-            while process.poll() is None:
-                await asyncio.sleep(0.1)
-            
-            # Cleanup
-            try:
-                os.unlink(tmp_audio.name)
-            except OSError:
-                pass
-                
-            self.finished.emit()
-            
-        except Exception as e:
-            self.error.emit(str(e))
-    
-    def run(self) -> None:
-        """Run the async TTS in a thread"""
-        asyncio.run(self.speak_async())
-
 class NovaWorker(QObject):
     """Worker class for Nova assistant commands"""
     status_update = pyqtSignal(str)
@@ -107,13 +64,14 @@ class NovaWorker(QObject):
     # ADD THIS NEW SIGNAL:
     execute_command_signal = pyqtSignal(dict)
 
-    def __init__(self, user_input: str, os_distro: str, use_safe_flag: bool, force_confirm: bool):
+    def __init__(self, user_input: str, os_distro: str, use_safe_flag: bool, force_confirm: bool, voice_mode):
         super().__init__()
         self.user_input = user_input
         self.os_distro = os_distro
         self.USE_SAFE_FLAG = use_safe_flag
         self.FORCE_CONFIRM = force_confirm
-        
+        self.voice_mode = voice_mode
+
         # Connect the execute signal to the method
         self.execute_command_signal.connect(self._execute_command)
 
@@ -122,37 +80,45 @@ class NovaWorker(QObject):
         self.status_update.emit("Processing your request...")
         self.state_update.emit("processing")
         
-        try:
-            # Query LLM
-            raw = query_llm(self.user_input, self.os_distro)
-            
-            # Parse response
-            try:
-                cmd = parse_response(raw)
-            except ValueError as e:
-                response = f"Error parsing response: {e}"
-                self.message_update.emit("Nova", response)
-                self.speak_signal.emit(response)
-                self.state_update.emit("error")
-                self.finished.emit()
-                return
+        # Use QTimer to make API call non-blocking
+        QTimer.singleShot(0, self._query_llm_async)
 
+    def _query_llm_async(self):
+        """Make LLM API call in a non-blocking way"""
+        try:
+            # Use ThreadPoolExecutor for the network call
+            with concurrent.futures.ThreadPoolExecutor() as executor:
+                future = executor.submit(query_llm, self.user_input, self.os_distro)
+                # Set a reasonable timeout
+                raw = future.result(timeout=10)  # 10 second timeout
+                
+            # Parse response
+            QTimer.singleShot(0, lambda: self._parse_response_async(raw))
+            
+        except Exception as e:
+            response = f"Error connecting to Nova: {e}"
+            self.message_update.emit("Nova", response)
+            self.state_update.emit("error")
+            self.speak_signal.emit(response)
+            self.finished.emit()
+
+    def _parse_response_async(self, raw: str):
+        """Parse LLM response asynchronously"""
+        try:
+            cmd = parse_response(raw)
+            
             # Handle command or conversation
             if cmd["type"] == "command":
                 self._handle_command(cmd)
             elif cmd["type"] == "conversation":
                 self._handle_conversation(cmd)
                 
-        except Exception as e:
-            response = f"An error occurred: {e}"
+        except ValueError as e:
+            response = f"Error parsing response: {e}"
             self.message_update.emit("Nova", response)
-            self.state_update.emit("error")
             self.speak_signal.emit(response)
-        finally:
-            self.status_update.emit("Nova is ready. Type a command or question.")
-            # DON'T emit finished here for confirmation commands
-            if not self.FORCE_CONFIRM:
-                self.finished.emit()
+            self.state_update.emit("error")
+            self.finished.emit()
     
     def _handle_command(self, cmd: Dict[str, Any]) -> None:
         """Handle command execution"""
@@ -169,40 +135,90 @@ class NovaWorker(QObject):
             self.state_update.emit("idle")
             self.confirmation_needed.emit(cmd, self.os_distro, self.user_input)
             return
-
+        
+        self.status_update.emit("Executing command...")
         self._execute_command(cmd)
     
     def _handle_conversation(self, cmd: Dict[str, Any]) -> None:
         """Handle conversation response"""
         self.message_update.emit("Nova", cmd["response"])
         self.state_update.emit("speaking")
-        self.speak_signal.emit(cmd["response"])
+
+        if self.voice_mode:
+            # Don't emit ready status - let TTS handle it
+            self.speak_signal.emit(cmd["response"])
+        else:
+            # No TTS, so we can reset status immediately
+            self.speak_signal.emit(cmd["response"])
+            self.status_update.emit("Nova is ready. Type a command or question.")
         self.finished.emit()
-    
+        
     def _execute_command(self, cmd: Dict[str, Any]) -> None:
-        """Execute the actual command"""
-        try:
-            result = execute(cmd)
-            if result:
-                summary = summarize_output(
-                    user_query=self.user_input,
-                    command=cmd["target"],
-                    output=result,
-                    os_distro=self.os_distro
-                )
-                self.message_update.emit("Nova", summary)
-                self.state_update.emit("speaking")
-                self.speak_signal.emit(summary)
-            else:
-                response = "Command executed successfully."
-                self.message_update.emit("Nova", response)
-                self.state_update.emit("speaking")
-                self.speak_signal.emit(response)
+        """Execute the actual command asynchronously"""
+        # Use QTimer for non-blocking execution
+        QTimer.singleShot(0, lambda: self._run_command_async(cmd))
+
+    def _run_command_async(self, cmd: Dict[str, Any]):
+        """Run command in background without blocking"""
+        try: 
+            with concurrent.futures.ThreadPoolExecutor() as executor:
+                # Execute command with timeout
+                future = executor.submit(execute, cmd)
+                result = future.result(timeout=15)  # 15 second timeout
+                
+                # Process result
+                if result:
+                    # Make summary generation async too
+                    QTimer.singleShot(0, lambda: self._generate_summary_async(result, cmd))
+                else:
+                    response = "Command executed successfully."
+                    self.message_update.emit("Nova", response)
+                    self.state_update.emit("speaking")
+                    self.status_update.emit("Ready")
+                    self.speak_signal.emit(response)
+                    self.finished.emit()
+                    
         except Exception as e:
             response = f"Error executing command: {e}"
             self.message_update.emit("Nova", response)
             self.state_update.emit("error")
             self.speak_signal.emit(response)
+            self.finished.emit()
+
+    def _generate_summary_async(self, result: str, cmd: Dict[str, Any]):
+        """Generate summary asynchronously"""
+        try:
+            with concurrent.futures.ThreadPoolExecutor() as executor:
+                future = executor.submit(
+                    summarize_output,
+                    self.user_input,
+                    cmd["target"],
+                    result,
+                    self.os_distro
+                )
+                summary = future.result(timeout=8)
+                
+                self.message_update.emit("Nova", summary)
+                self.state_update.emit("speaking")
+                
+                if self.voice_mode:
+                    # Let TTS handle status updates
+                    self.speak_signal.emit(summary)
+                else:
+                    # No TTS, reset status immediately
+                    self.speak_signal.emit(summary)
+                    self.status_update.emit("Nova is ready. Type a command or question.")
+                    
+        except Exception as e:
+            response = f"Command completed. Result: {result[:200]}..."
+            self.message_update.emit("Nova", response)
+            self.state_update.emit("speaking")
+            
+            if self.voice_mode:
+                self.speak_signal.emit(response)
+            else:
+                self.speak_signal.emit(response)
+                self.status_update.emit("Nova is ready. Type a command or question.")
         finally:
             self.finished.emit()
 
@@ -215,7 +231,6 @@ class MainWindow(QMainWindow):
         self._init_properties()
         self._init_ui_components()
         self.setup_ui()
-        self._setup_timers()
 
     def _init_properties(self) -> None:
         """Initialize window properties"""
@@ -247,6 +262,10 @@ class MainWindow(QMainWindow):
         # Add this line for chat history
         self.chat_history = []
 
+        # Audio tracking
+        self.audio_process = None
+        self.is_audio_playing = False
+
         os.makedirs(os.path.dirname(self.OUTPUT_CSV), exist_ok=True)
 
     def _init_ui_components(self) -> None:
@@ -269,24 +288,6 @@ class MainWindow(QMainWindow):
         self.memory_chart = QChart()
         self.disk_chart = QChart()
         self.network_chart = QChart()
-    
-    def _setup_timers(self) -> None:
-        """Setup non-blocking timers - minimal diagnostic checks only"""
-        # Only UI update timer if needed for diagnostics
-        self.ui_timer = QTimer()
-        self.ui_timer.timeout.connect(self._periodic_ui_update)
-        self.ui_timer.start(10000)  # Every 10 seconds for basic health checks
-
-    def _periodic_ui_update(self) -> None:
-        """Minimal periodic update - just health checks"""
-        try:
-            # Just basic health checks
-            if hasattr(self, 'nova_thread') and self.nova_thread and not self.nova_thread.isRunning():
-                if hasattr(self, 'nova_status'):
-                    self.nova_status.setText("Nova is ready. Type a command or question.")
-                self.set_assistant_state("idle")
-        except Exception as e:
-            print(f"Error in periodic update: {e}")
 
     def setup_assistant_animation(self) -> None:
         """Set up the assistant animation once - runs continuously"""
@@ -366,50 +367,65 @@ class MainWindow(QMainWindow):
         return load_config()
 
     def speak_text(self, text: str) -> None:
-        """
-        Non-blocking text-to-speech functionality.
-        """
+        """Non-blocking TTS using QTimer"""
         if not self.VOICE_MODE:
             return
+        
+        # Show stop button when speaking starts
+        self.nova_status.setText("Speaking...")   
+        self.stop_audio_button.show()
 
-        # Clean up previous TTS thread properly
-        if hasattr(self, 'tts_thread') and self.tts_thread:
-            if self.tts_thread.isRunning():
-                self.tts_thread.quit()
-                self.tts_thread.wait(2000)  # Increased timeout
-            self.tts_thread = None  # Clear reference
-            self.tts_worker = None  # Clear reference
+        # Use QTimer.singleShot for non-blocking execution
+        QTimer.singleShot(0, lambda: self._speak_in_background(text))
+    
+    def _speak_in_background(self, text: str):
+        """Run TTS in background without blocking"""
+        try:
+            # Generate TTS file
+            async def generate_tts():
+                communicate = edge_tts.Communicate(text, "en-US-AriaNeural")
+                tmp_audio = tempfile.NamedTemporaryFile(delete=False, suffix=".mp3")
+                await communicate.save(tmp_audio.name)
+                return tmp_audio.name
+            
+            # Run async TTS generation in thread pool
+            import concurrent.futures
+            with concurrent.futures.ThreadPoolExecutor() as executor:
+                future = executor.submit(asyncio.run, generate_tts())
+                audio_file = future.result(timeout=5)  # 5 second timeout
+                
+                # Play audio and track process
+                self.audio_process = subprocess.Popen(['play', audio_file], 
+                            stdout=subprocess.DEVNULL, 
+                            stderr=subprocess.DEVNULL)
+                
+                # Monitor when audio finishes
+                QTimer.singleShot(100, self._check_audio_finished)
+                
+        except Exception as e:
+            print(f"TTS Error: {e}")
+            self._reset_audio_ui()
 
-        # Clean up previous TTS thread if exists
-        if hasattr(self, 'tts_thread') and self.tts_thread is not None:
-            try:
-                if self.tts_thread.isRunning():
-                    self.tts_thread.quit()
-                    self.tts_thread.wait(1000)
-            except RuntimeError:
-                pass
-            finally:
-                self.tts_thread = None
-                self.tts_worker = None
+    def _check_audio_finished(self):
+        """Check if audio playback has finished"""
+        if self.audio_process and self.audio_process.poll() is None:
+            # Still playing, check again
+            QTimer.singleShot(100, self._check_audio_finished)
+        else:
+            # Audio finished
+            self._reset_audio_ui()
 
-        # Create TTS worker and thread
-        self.tts_thread = QThread()
-        self.tts_worker = TTSWorker(text)
-        self.tts_worker.moveToThread(self.tts_thread)
+    def stop_audio(self):
+        """Stop audio playback"""
+        if self.audio_process and self.audio_process.poll() is None:
+            self.audio_process.terminate()
+        self._reset_audio_ui()
 
-        # Connect signals
-        self.tts_worker.finished.connect(self._on_tts_finished, Qt.QueuedConnection)
-        self.tts_worker.error.connect(lambda e: print(f"TTS Error: {e}"), Qt.QueuedConnection)
-
-        # Start TTS
-        self.tts_thread.started.connect(self.tts_worker.run)
-        self.tts_thread.start()
-
-    def _on_tts_finished(self) -> None:
-        """ 
-        Called when TTS finishes.
-        """
-        self._cleanup_tts_thread()
+    def _reset_audio_ui(self):
+        """Reset audio UI elements"""
+        self.nova_status.setText("Nova is ready. Type a command or question.")
+        self.stop_audio_button.hide()
+        self.audio_process = None
 
     def toggle_voice_mode(self, enable: bool) -> None:
         """
@@ -424,21 +440,6 @@ class MainWindow(QMainWindow):
         else:
             if hasattr(self, 'nova_status'):
                 self.nova_status.setText("Voice mode disabled")
-
-    def _cleanup_tts_thread(self) -> None:
-        """Safely cleanup TTS thread and worker"""
-        if hasattr(self, 'tts_thread') and self.tts_thread is not None:
-            try:
-                self.tts_thread.quit()
-                self.tts_thread.wait(2000)
-            except RuntimeError:
-                # Object already deleted
-                pass
-            finally:
-                self.tts_thread = None
-        
-        if hasattr(self, 'tts_worker'):
-            self.tts_worker = None
 
     def send_nova_command(self) -> None:
         """Send a command to Nova assistant using thread-safe approach"""
@@ -455,7 +456,7 @@ class MainWindow(QMainWindow):
         # Create worker and thread
         self.nova_thread = QThread()
         self.nova_worker = NovaWorker(
-            user_input, self.os_distro, self.USE_SAFE_FLAG, self.FORCE_CONFIRM
+            user_input, self.os_distro, self.USE_SAFE_FLAG, self.FORCE_CONFIRM, self.VOICE_MODE
         )
         self.nova_worker.moveToThread(self.nova_thread)
 
@@ -490,29 +491,72 @@ class MainWindow(QMainWindow):
             self.nova_worker = None
 
     def handle_command_confirmation(self, cmd: Dict[str, Any], os_distro: str, user_input: str) -> None:
-        """Handle command confirmation dialog"""
+        """Handle command confirmation dialog - non-blocking version"""
         reply = QMessageBox.question(
-            self,
-            'Confirm Command',
+            self, 'Confirm Command',
             f"Execute {cmd['action']} → {cmd['target']}?",
-            QMessageBox.Yes | QMessageBox.No,
-            QMessageBox.No
+            QMessageBox.Yes | QMessageBox.No, QMessageBox.No
         )
         
         if reply == QMessageBox.Yes:
-            # Use signal instead of direct method call
-            if hasattr(self, 'nova_worker') and self.nova_worker:
-                self.nova_worker.execute_command_signal.emit(cmd)
-            else:
-                response = "Worker not available. Please try again."
-                self.add_nova_message("Nova", response)
+            # Set status immediately
+            self.nova_status.setText("Executing command...")
+            
+            # Execute in background to prevent UI freezing
+            QTimer.singleShot(0, lambda: self._execute_confirmed_command_async(cmd, os_distro, user_input))
         else:
             response = "Command cancelled."
             self.add_nova_message("Nova", response)
             self.speak_text(response)
-            # Emit finished signal to clean up the worker
-            if hasattr(self, 'nova_worker') and self.nova_worker:
-                self.nova_worker.finished.emit()
+            self.nova_status.setText("Nova is ready. Type a command or question.")
+    def _execute_confirmed_command_async(self, cmd: Dict[str, Any], os_distro: str, user_input: str) -> None:
+        """Execute confirmed command in background thread"""
+        try:
+            with concurrent.futures.ThreadPoolExecutor() as executor:
+                # Execute command with timeout
+                future = executor.submit(execute, cmd)
+                result = future.result(timeout=15)  # 15 second timeout
+                
+                if result:
+                    # Generate summary in background too
+                    QTimer.singleShot(0, lambda: self._generate_confirmed_summary_async(result, cmd, user_input, os_distro))
+                else:
+                    response = "Command executed successfully."
+                    self.add_nova_message("Nova", response)
+                    # Set speaking status BEFORE calling speak_text
+                    self.nova_status.setText("Speaking...")
+                    self.speak_text(response)
+                    
+        except Exception as e:
+            response = f"Error executing command: {e}"
+            self.add_nova_message("Nova", response)
+            self.nova_status.setText("Speaking...")
+            self.speak_text(response)
+
+    def _generate_confirmed_summary_async(self, result: str, cmd: Dict[str, Any], user_input: str, os_distro: str) -> None:
+        """Generate summary for confirmed command execution"""
+        try:
+            with concurrent.futures.ThreadPoolExecutor() as executor:
+                future = executor.submit(
+                    summarize_output,
+                    user_input,
+                    cmd["target"],
+                    result,
+                    os_distro
+                )
+                summary = future.result(timeout=8)  # 8 second timeout
+                
+                self.add_nova_message("Nova", summary)
+                # Set speaking status BEFORE calling speak_text
+                self.nova_status.setText("Speaking...")
+                self.speak_text(summary)
+                
+        except Exception as e:
+            # Fallback to raw result
+            response = f"Command completed. Result: {result[:200]}..."
+            self.add_nova_message("Nova", response)
+            self.nova_status.setText("Speaking...")
+            self.speak_text(response)
 
     def set_assistant_state(self, state: str) -> None:
         """Set the assistant animation state"""
@@ -1462,9 +1506,29 @@ class MainWindow(QMainWindow):
         input_layout.addWidget(self.nova_voice_button)
         input_layout.addWidget(self.nova_history_button)
         
-        # Status
+        # Status container with stop button
+        status_container = QWidget()
+        status_layout = QHBoxLayout(status_container)
+        status_layout.setContentsMargins(0, 0, 0, 0)
+        status_layout.setSpacing(10)  # Add spacing between elements
+
         self.nova_status = QLabel("Nova is ready. Type a command or question.")
         self.nova_status.setAlignment(Qt.AlignCenter)
+
+        # Stop button with proper size
+        self.stop_audio_button = QPushButton("Stop")
+        self.stop_audio_button.setFixedSize(70, 30)  # Increased size
+        self.stop_audio_button.clicked.connect(self.stop_audio)
+        self.stop_audio_button.hide()
+
+        # Add widgets with stretch to control positioning
+        status_layout.addStretch(1)  # Push everything to center
+        status_layout.addWidget(self.nova_status)
+        status_layout.addWidget(self.stop_audio_button)  # Right next to status
+        status_layout.addStretch(1)  # Balance the layout
+
+        # Add to layout
+        nova_layout.addWidget(status_container)
         
         # Add to layout
         nova_layout.addWidget(nova_title)
@@ -1472,7 +1536,7 @@ class MainWindow(QMainWindow):
         nova_layout.addWidget(feedback_container)
         nova_layout.addWidget(self.nova_conversation)
         nova_layout.addWidget(input_container)
-        nova_layout.addWidget(self.nova_status)
+        nova_layout.addWidget(status_container)
         
         self.tabs.addTab(nova_widget, "Nova Assistant")
 

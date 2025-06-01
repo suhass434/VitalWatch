@@ -17,6 +17,9 @@ logging.basicConfig(
 )
 
 def log_interaction(user_text, llm_raw, parsed, result):
+    """
+    Log user interaction with assistant.
+    """
     logging.info("USER: %s", user_text)
     logging.info("LLM_RAW: %s", llm_raw)
     logging.info("PARSED: %s", parsed)

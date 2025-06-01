@@ -129,29 +129,69 @@ class VitalWatchApp(QObject):  # Inherit from QObject to use signals
         self.stop()
     
     def data_collection_task(self) -> None:
-        """Background task for collecting system metrics."""
         system_monitor = SystemMonitor()
-        logger.info("Data collection task started")
+        process_monitor = ProcessMonitor()
+        logger.info("Combined monitoring task started")
         
         while not self.stopping_event.is_set():
             try:
-                # Collect metrics
-                metrics = [system_monitor.collect_metrics()]
-                preprocess_data(metrics, self.output_csv)
+                # Collect system metrics
+                metrics = system_monitor.collect_metrics()
                 
-                # Manage CSV size
-                manage_csv_size(self.output_csv, self.threshold_step)
+                # Emit signal for GUI update immediately
+                self.metrics_updated.emit(metrics)
                 
-                # Use event-based waiting instead of blocking sleep
+                # Do CSV operations less frequently to avoid blocking
+                if not hasattr(self, '_csv_counter'):
+                    self._csv_counter = 0
+                self._csv_counter += 1
+                
+                # Only save to CSV every 3rd iteration
+                if self._csv_counter % 3 == 0:
+                    QTimer.singleShot(0, lambda: self._save_csv_async(metrics))
+                
+                # Collect process data every 4th iteration
+                if self._csv_counter % 4 == 0:
+                    processes = process_monitor.monitor_processes()
+                    self.processes_updated.emit(processes)
+                
                 if self.stopping_event.wait(timeout=self.config['monitoring']['interval']):
                     break
                     
             except Exception as e:
-                logger.error(f"Error in data collection: {e}")
+                logger.error(f"Error in combined monitoring: {e}")
                 if self.stopping_event.wait(timeout=self.config['monitoring']['interval']):
                     break
-        
-        logger.info("Data collection task stopped")
+
+    def _save_csv_async(self, metrics):
+        """Save CSV data without blocking GUI"""
+        try:
+            import concurrent.futures
+            
+            # Run CSV operations in thread pool
+            with concurrent.futures.ThreadPoolExecutor() as executor:
+                # Submit CSV operations
+                future = executor.submit(self._csv_operations, metrics)
+                # Don't wait for result - fire and forget
+                
+        except Exception as e:
+            logger.error(f"CSV save error: {e}")
+
+    def _csv_operations(self, metrics):
+        """Actual CSV operations in background"""
+        try:
+            preprocess_data([metrics], self.output_csv)
+            
+            # Only manage CSV size occasionally
+            if not hasattr(self, '_manage_counter'):
+                self._manage_counter = 0
+            self._manage_counter += 1
+            
+            if self._manage_counter % 20 == 0:  # Every 20th save
+                manage_csv_size(self.output_csv, self.threshold_step)
+                
+        except Exception as e:
+            logger.error(f"Background CSV operations error: {e}")
     
     def anomaly_detection_task(self) -> None:
         iteration_count = 0
@@ -162,74 +202,44 @@ class VitalWatchApp(QObject):  # Inherit from QObject to use signals
                 iteration_count += 1
                 if iteration_count >= self.threshold_step:
                     logger.info("Executing anomaly detection cycle")
-                    anomalies = detect_anomalies(self.output_csv, self.threshold_step)
                     
-                    if anomalies is not None and hasattr(anomalies, 'empty') and not anomalies.empty:
-                        anomaly_list = anomalies.to_dict('records')
-                        QMetaObject.invokeMethod(
-                            self, "anomalies_updated",
-                            Qt.QueuedConnection,
-                            Q_ARG(list, anomaly_list)
-                        )
-                        logger.info(f"Detected {len(anomalies)} anomalies")
-                    else:
-                        QMetaObject.invokeMethod(
-                            self, "anomalies_updated", 
-                            Qt.QueuedConnection,
-                            Q_ARG(list, [])
-                        )
-                        logger.debug("No anomalies detected")
+                    # Use QTimer.singleShot for non-blocking execution
+                    from PyQt5.QtCore import QTimer
+                    QTimer.singleShot(0, self._run_anomaly_detection_async)
                     iteration_count = 0
                 
-                # ADD THIS: Wait between iterations regardless of detection
                 if self.stopping_event.wait(timeout=self.config['monitoring']['interval']):
                     break
                     
             except Exception as e:
-                logger.error(f"Anomaly detection failed: {e}", exc_info=True)
-                self.anomalies_updated.emit([])
-                # Also add delay on error
+                logger.error(f"Anomaly detection failed: {e}")
                 if self.stopping_event.wait(timeout=self.config['monitoring']['interval']):
                     break
 
-    def monitoring_task(self) -> None:
-        """Background task for monitoring system metrics and updating GUI."""
-        system_monitor = SystemMonitor()
-        process_monitor = ProcessMonitor()
-        logger.info("Monitoring task started")
-        
-        while not self.stopping_event.is_set():
-            try:
-                # Collect system metrics
-                metrics = system_monitor.collect_metrics()
-                # Emit signal instead of direct GUI update
-                self.metrics_updated.emit(metrics)
+    def _run_anomaly_detection_async(self):
+        """Run anomaly detection without blocking"""
+        try:
+            import concurrent.futures
+            
+            # Run detection in thread pool to avoid blocking
+            with concurrent.futures.ThreadPoolExecutor() as executor:
+                future = executor.submit(detect_anomalies, self.output_csv, self.threshold_step)
+                anomalies = future.result(timeout=10)  # 10 second timeout
                 
-                # Short wait before process update
-                if self.stopping_event.wait(timeout=self.config['monitoring']['interval'] / 2):
-                    break
-                
-                # Collect process data
-                processes = process_monitor.monitor_processes()
-                # Emit signal instead of direct GUI update
-                self.processes_updated.emit(processes)
-                
-                # Wait for remaining interval
-                if self.stopping_event.wait(timeout=self.config['monitoring']['interval'] / 2):
-                    break
+                # Process results
+                if anomalies is not None and hasattr(anomalies, 'empty') and not anomalies.empty:
+                    self.anomalies_updated.emit(anomalies.to_dict('records'))
+                else:
+                    self.anomalies_updated.emit([])
                     
-            except Exception as e:
-                logger.error(f"Error in monitoring: {e}")
-                if self.stopping_event.wait(timeout=self.config['monitoring']['interval']):
-                    break
-        
-        logger.info("Monitoring task stopped")
+        except Exception as e:
+            logger.error(f"Async anomaly detection error: {e}")
+            self.anomalies_updated.emit([])
     
     def start_background_tasks(self) -> None:
         """Start all background monitoring tasks."""
         tasks = [
-            ("monitoring", self.monitoring_task),
-            ("data_collection", self.data_collection_task),
+            ("combined_monitoring", self.data_collection_task),
             ("anomaly_detection", self.anomaly_detection_task)
         ]
         

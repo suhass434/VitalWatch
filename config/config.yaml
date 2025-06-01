@@ -7,7 +7,7 @@ monitoring:
   process:
     max_count: 100
     sleep: 0.1
-  anomaly_detection_interval: 5
+  anomaly_detection_interval: 100
 
 database:
   url: "sqlite:///system_monitor.db"

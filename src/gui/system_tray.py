@@ -127,16 +127,6 @@ class SystemMonitorTray(QSystemTrayIcon):
             self.parent_window.activateWindow()
         print("Main window restored from system tray")
 
-    def show_dashboard(self):
-        """Show the main application window"""
-        if hasattr(self, 'restore_callback') and self.restore_callback:
-            self.restore_callback()
-        elif self.parent_window:
-            self.parent_window.show()
-            self.parent_window.raise_()
-            self.parent_window.activateWindow()
-        print("Main window restored from system tray")
-
     def set_restore_callback(self, callback):
         """Set callback function for window restoration"""
         self.restore_callback = callback

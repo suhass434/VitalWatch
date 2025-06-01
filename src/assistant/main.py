@@ -7,7 +7,6 @@ import os
 from .llm_client import query_llm, summarize_output
 from .parser import parse_response
 from .executor import is_safe, execute
-from .logger import log_interaction
 from .config import FORCE_CONFIRM, USE_SAFE_FLAG
 from aioconsole import ainput
 
@@ -23,9 +22,11 @@ async def speak(text: str):
     os.system(f'play "{tmp_audio.name}"')
 
 def get_distro():
+    """Get OS distribution from user input."""
     return input("Enter your OS/distribution (e.g., Ubuntu 22.04): ").strip()
 
 def listen_voice(recognizer, microphone):
+    """Listen for voice input and convert to text."""
     print("Listening…")
     try:
         audio = recognizer.listen(microphone)
@@ -40,6 +41,7 @@ def listen_voice(recognizer, microphone):
         return ""
 
 async def process_user_input(user_text, os_distro):
+    """Process user input through LLM and execute commands."""
     raw = query_llm(user_text, os_distro)
     try:
         cmd = parse_response(raw)
@@ -50,7 +52,6 @@ async def process_user_input(user_text, os_distro):
     if cmd["type"] == "command":
         if USE_SAFE_FLAG and not is_safe(cmd):
             print("Blocked unsafe command.")
-            #log_interaction(user_text, raw, cmd, "blocked_unsafe")
             return None
 
         if FORCE_CONFIRM:
@@ -58,7 +59,6 @@ async def process_user_input(user_text, os_distro):
             ans = (await ainput(prompt)).strip().lower()
             if ans != "y":
                 print("Canceled by user.")
-                #log_interaction(user_text, raw, cmd, "canceled")
                 return None
 
         try:
@@ -74,19 +74,16 @@ async def process_user_input(user_text, os_distro):
         except Exception as e:
             result = str(e)
             print("✖ Execution failed:", e)
-
-        #log_interaction(user_text, raw, cmd, result)
-
         return None
 
     elif cmd["type"] == "conversation":
         print(cmd["response"])
         if VOICE_MODE:
             await speak(cmd["response"])
-        #log_interaction(user_text, raw, cmd, "spoken")
         return None
 
 async def main_loop():
+    """Main application loop for handling user interactions."""
     os_distro = get_distro()
     recognizer = sr.Recognizer()
     print("Type 'speak' to enter voice command mode, or type your command. 'exit' to quit.")
