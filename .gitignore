@@ -16,3 +16,5 @@ __pycache__/
 tests
 pytest.ini
 requirements-test.txt
+main_window_copy.py
+main_window_new.py

@@ -10,6 +10,8 @@ import pandas as pd
 import edge_tts
 import subprocess
 import concurrent.futures
+import speech_recognition as sr
+from PyQt5.QtCore import pyqtSlot
 
 from PyQt5.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, 
@@ -52,6 +54,30 @@ def load_config() -> Dict[str, Any]:
     config_path = get_resource_path('config/config.yaml')
     with open(config_path, 'r') as file:
         return yaml.safe_load(file)
+
+class VoiceWorker(QObject):
+    """Worker for voice recognition"""
+    recognized = pyqtSignal(str)
+    
+    def __init__(self, recognizer, microphone):
+        super().__init__()
+        self.recognizer = recognizer
+        self.microphone = microphone
+        
+    def run(self):
+        """Run voice recognition"""
+        try:
+            with self.microphone as source:
+                self.recognizer.adjust_for_ambient_noise(source, duration=1)
+                audio = self.recognizer.listen(source, timeout=5, phrase_time_limit=10)
+            text = self.recognizer.recognize_google(audio)
+            self.recognized.emit(text)
+        except sr.UnknownValueError:
+            self.recognized.emit("")
+        except sr.RequestError as e:
+            self.recognized.emit(f"Error: {e}")
+        except Exception as e:
+            self.recognized.emit(f"Error: {e}")
 
 class NovaWorker(QObject):
     """Worker class for Nova assistant commands"""
@@ -265,6 +291,11 @@ class MainWindow(QMainWindow):
         # Audio tracking
         self.audio_process = None
         self.is_audio_playing = False
+        self.VOICE_INPUT_MODE = False
+        self.recognizer = None
+        self.microphone = None
+        self.is_listening = False  # Track if actively listening
+        self.voice_thread = None  # Reference to voice thread
 
         os.makedirs(os.path.dirname(self.OUTPUT_CSV), exist_ok=True)
 
@@ -426,6 +457,17 @@ class MainWindow(QMainWindow):
         self.nova_status.setText("Nova is ready. Type a command or question.")
         self.stop_audio_button.hide()
         self.audio_process = None
+        self.is_audio_playing = False
+
+        if self.VOICE_INPUT_MODE and self.is_listening:
+            self.nova_status.setText("Listening...")
+        elif self.VOICE_INPUT_MODE:
+            self.nova_status.setText("Voice input active")
+        else:
+            self.nova_status.setText("Nova is ready. Type a command or question.")
+        # Restart listening if voice input is active
+        if self.VOICE_INPUT_MODE:
+            QTimer.singleShot(1000, self.start_voice_listening)
 
     def toggle_voice_mode(self, enable: bool) -> None:
         """
@@ -776,7 +818,7 @@ class MainWindow(QMainWindow):
             for chart in [self.cpu_chart, self.memory_chart, self.disk_chart, self.network_chart]:
                 chart.update()
                 
-            print(f"Charts updated: CPU={cpu_percent}%, Memory={memory_percent}%, Upload={upload_speed:.1f}KB/s, Download={download_speed:.1f}KB/s")
+            #print(f"Charts updated: CPU={cpu_percent}%, Memory={memory_percent}%, Upload={upload_speed:.1f}KB/s, Download={download_speed:.1f}KB/s")
             
         except Exception as e:
             print(f"Error updating charts: {e}")
@@ -964,13 +1006,17 @@ class MainWindow(QMainWindow):
         self.update_process_table(self.current_processes)
 
     def toggle_nova_voice_mode(self) -> None:
-        """Toggle voice mode for Nova assistant"""
+        """Toggle speech output mode"""
         self.VOICE_MODE = not self.VOICE_MODE
-        if hasattr(self, 'nova_voice_button'):
-            self.nova_voice_button.setText("Voice: ON" if self.VOICE_MODE else "Voice: OFF")
+        if hasattr(self, 'speech_output_button'):
+            # Update button appearance instead of text
+            if self.VOICE_MODE:
+                self.speech_output_button.setStyleSheet("background-color: #00C851; color: white;")
+            else:
+                self.speech_output_button.setStyleSheet("")
         
         status = "enabled" if self.VOICE_MODE else "disabled"
-        self.add_nova_message("System", f"Voice mode {status}.")
+        self.add_nova_message("System", f"Speech output {status}.")
 
     def toggle_command_confirmation(self, state: bool) -> None:
         """Toggle whether commands require confirmation before execution"""
@@ -1495,15 +1541,20 @@ class MainWindow(QMainWindow):
         self.nova_send_button = QPushButton("Send")
         self.nova_send_button.clicked.connect(self.send_nova_command)
         
-        self.nova_voice_button = QPushButton("Voice: OFF")
-        self.nova_voice_button.clicked.connect(self.toggle_nova_voice_mode)
+        self.speech_output_button = QPushButton("Speech Output")
+        self.speech_output_button.clicked.connect(self.toggle_nova_voice_mode)
         
+        self.microphone_button = QPushButton("Microphone")
+        self.microphone_button.setObjectName("voiceInputButton")
+        self.microphone_button.clicked.connect(self.toggle_voice_input_mode)
+
         self.nova_history_button = QPushButton("History")
         self.nova_history_button.clicked.connect(self.show_nova_history)
         
         input_layout.addWidget(self.nova_input)
         input_layout.addWidget(self.nova_send_button)
-        input_layout.addWidget(self.nova_voice_button)
+        input_layout.addWidget(self.speech_output_button)
+        input_layout.addWidget(self.microphone_button)
         input_layout.addWidget(self.nova_history_button)
         
         # Status container with stop button
@@ -1789,6 +1840,86 @@ class MainWindow(QMainWindow):
         
         self.tabs.addTab(self.settings_widget, "Settings")
 
+    def init_voice_recognition(self):
+        """Initialize voice recognition components"""
+        self.recognizer = sr.Recognizer()
+        self.microphone = sr.Microphone()
+        
+    def toggle_voice_input_mode(self):
+        """Toggle continuous voice input mode"""
+        self.VOICE_INPUT_MODE = not self.VOICE_INPUT_MODE
+        
+        # Update button appearance
+        if self.VOICE_INPUT_MODE:
+            self.nova_status.setText("Voice input activated")
+            self.microphone_button.setStyleSheet("background-color: #4A90E2; color: white;")
+            self.start_voice_listening()
+        else:
+            self.microphone_button.setStyleSheet("")
+            self.nova_status.setText("Voice input deactivated")
+            self.stop_voice_listening()
+            
+        # Update status
+        status = "activated" if self.VOICE_INPUT_MODE else "deactivated"
+        self.nova_status.setText(f"Voice input {status}.")
+
+    def start_voice_listening(self):
+        """Start continuous listening for voice commands"""
+        if not self.recognizer:
+            self.init_voice_recognition()
+        
+        # Don't start if audio is playing or already listening
+        if self.is_audio_playing or self.is_listening:
+            return
+            
+        self.is_listening = True
+        self.nova_status.setText("Listening...")
+        
+        # Create new thread each time we start listening
+        self.voice_thread = QThread()
+        self.voice_worker = VoiceWorker(self.recognizer, self.microphone)
+        self.voice_worker.moveToThread(self.voice_thread)
+        
+        self.voice_worker.recognized.connect(self.handle_voice_input)
+        self.voice_thread.started.connect(self.voice_worker.run)
+        self.voice_thread.finished.connect(self.cleanup_voice_thread)
+        self.voice_thread.start()
+
+    def stop_voice_listening(self):
+        """Stop continuous voice listening"""
+        self.is_listening = False
+        if self.VOICE_INPUT_MODE:
+            self.nova_status.setText("Voice input active")
+        else:
+            self.nova_status.setText("Nova is ready. Type a command or question.")
+        if hasattr(self, 'voice_thread') and self.voice_thread:
+            if self.voice_thread.isRunning():
+                self.voice_thread.quit()
+                self.voice_thread.wait(500)
+        self.nova_status.setText("Voice input stopped")
+        
+    @pyqtSlot(str)
+    def handle_voice_input(self, text: str):
+        """Handle recognized voice input"""
+        # Only process non-empty successful recognitions
+        if not text or text.startswith("Error:"):
+            # Log error but don't add to chat
+            if text.startswith("Error:"):
+                print(f"Voice recognition error: {text}")
+                
+            # Restart listening if needed
+            if self.VOICE_INPUT_MODE and not self.is_audio_playing:
+                QTimer.singleShot(1000, self.start_voice_listening)
+            return
+            
+        # Set text and send command
+        self.nova_input.setText(text)
+        self.send_nova_command()
+        
+        # Restart listening if still in voice input mode
+        if self.VOICE_INPUT_MODE and not self.is_audio_playing:
+            QTimer.singleShot(1000, self.start_voice_listening)
+
     def _cleanup_nova_worker(self) -> None:
         """Clean up Nova worker and thread safely"""
         try:
@@ -1849,6 +1980,19 @@ class MainWindow(QMainWindow):
         except Exception as e:
             print(f"Error during application quit: {e}")        
 
+    def cleanup_voice_thread(self):
+        """Clean up voice recognition resources"""
+        if hasattr(self, 'voice_thread') and self.voice_thread:
+            try:
+                self.voice_thread.quit()
+                self.voice_thread.wait(500)
+                self.voice_thread.deleteLater()
+            except:
+                pass
+            finally:
+                self.voice_thread = None
+        self.voice_worker = None
+
     def _cleanup_threads(self):
         """Helper method to cleanup all threads"""
         # Nova thread cleanup
@@ -1881,6 +2025,7 @@ class MainWindow(QMainWindow):
         """Clean up threads on application close"""
         # Stop voice mode
         self.VOICE_MODE = False
+        self.VOICE_INPUT_MODE = False
         
         # Clean up TTS
         if hasattr(self, 'tts_thread') and self.tts_thread and self.tts_thread.isRunning():
@@ -1891,5 +2036,9 @@ class MainWindow(QMainWindow):
         if hasattr(self, 'nova_thread') and self.nova_thread and self.nova_thread.isRunning():
             self.nova_thread.quit()
             self.nova_thread.wait(3000)
+        
+        # Clean up voice recognition
+        self.stop_voice_listening()
+        self.cleanup_voice_thread()
         
         event.accept()
