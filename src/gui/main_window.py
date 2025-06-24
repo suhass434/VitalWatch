@@ -19,7 +19,7 @@ from PyQt5.QtWidgets import (
     QHeaderView, QGroupBox, QCheckBox, QButtonGroup, QRadioButton, 
     QApplication, QGraphicsOpacityEffect, QLineEdit, QTextEdit, 
     QDialog, QListWidget, QListWidgetItem, QMessageBox, QSystemTrayIcon,
-    QMenu, QAction
+    QMenu, QAction, QSizePolicy
 )
 
 from PyQt5.QtCore import Qt, QSize, QThread, QTimer, pyqtSignal, QObject
@@ -55,30 +55,6 @@ def load_config() -> Dict[str, Any]:
     with open(config_path, 'r') as file:
         return yaml.safe_load(file)
 
-class VoiceWorker(QObject):
-    """Worker for voice recognition"""
-    recognized = pyqtSignal(str)
-    
-    def __init__(self, recognizer, microphone):
-        super().__init__()
-        self.recognizer = recognizer
-        self.microphone = microphone
-        
-    def run(self):
-        """Run voice recognition"""
-        try:
-            with self.microphone as source:
-                self.recognizer.adjust_for_ambient_noise(source, duration=1)
-                audio = self.recognizer.listen(source, timeout=5, phrase_time_limit=10)
-            text = self.recognizer.recognize_google(audio)
-            self.recognized.emit(text)
-        except sr.UnknownValueError:
-            self.recognized.emit("")
-        except sr.RequestError as e:
-            self.recognized.emit(f"Error: {e}")
-        except Exception as e:
-            self.recognized.emit(f"Error: {e}")
-
 class NovaWorker(QObject):
     """Worker class for Nova assistant commands"""
     status_update = pyqtSignal(str)
@@ -87,7 +63,6 @@ class NovaWorker(QObject):
     speak_signal = pyqtSignal(str)
     finished = pyqtSignal()
     confirmation_needed = pyqtSignal(dict, str, str)
-    # ADD THIS NEW SIGNAL:
     execute_command_signal = pyqtSignal(dict)
 
     def __init__(self, user_input: str, os_distro: str, use_safe_flag: bool, force_confirm: bool, voice_mode):
@@ -250,7 +225,7 @@ class NovaWorker(QObject):
 
 class MainWindow(QMainWindow):
     """Main application window for VitalWatch"""
-    
+    voice_input_received = pyqtSignal(str)
     def __init__(self):
         super().__init__()
         self.config = load_config()
@@ -269,7 +244,8 @@ class MainWindow(QMainWindow):
         self.is_speaking = False
         self.speech_event = threading.Event()
         self.speech_event.set()
-        
+        self._was_listening = False 
+
         # Configuration
         self.os_distro = get_os_distro()
         self.USE_SAFE_FLAG = True
@@ -295,7 +271,8 @@ class MainWindow(QMainWindow):
         self.recognizer = None
         self.microphone = None
         self.is_listening = False  # Track if actively listening
-        self.voice_thread = None  # Reference to voice thread
+        self.stop_listening_callback = None  # Reference to voice thread
+        self.voice_input_received.connect(self.handle_voice_input)
 
         os.makedirs(os.path.dirname(self.OUTPUT_CSV), exist_ok=True)
 
@@ -402,6 +379,13 @@ class MainWindow(QMainWindow):
         if not self.VOICE_MODE:
             return
         
+        # Pause voice input to prevent the assistant from hearing itself
+        if self.VOICE_INPUT_MODE and self.is_listening:
+            self.stop_voice_listening()
+            self._was_listening = True
+        else:
+            self._was_listening = False
+        
         # Show stop button when speaking starts
         self.nova_status.setText("Speaking...")   
         self.stop_audio_button.show()
@@ -454,20 +438,19 @@ class MainWindow(QMainWindow):
 
     def _reset_audio_ui(self):
         """Reset audio UI elements"""
-        self.nova_status.setText("Nova is ready. Type a command or question.")
         self.stop_audio_button.hide()
         self.audio_process = None
         self.is_audio_playing = False
 
-        if self.VOICE_INPUT_MODE and self.is_listening:
-            self.nova_status.setText("Listening...")
+        # Restart listening if it was paused for speech
+        if self.VOICE_INPUT_MODE and getattr(self, '_was_listening', False):
+            self._was_listening = False  # Reset the flag
+            self.nova_status.setText("Resuming listening...")
+            QTimer.singleShot(250, self.start_voice_listening) # Restart after a short delay
         elif self.VOICE_INPUT_MODE:
             self.nova_status.setText("Voice input active")
         else:
             self.nova_status.setText("Nova is ready. Type a command or question.")
-        # Restart listening if voice input is active
-        if self.VOICE_INPUT_MODE:
-            QTimer.singleShot(1000, self.start_voice_listening)
 
     def toggle_voice_mode(self, enable: bool) -> None:
         """
@@ -1321,64 +1304,74 @@ class MainWindow(QMainWindow):
         # Create main container for all metric+chart pairs
         main_container = QWidget()
         main_layout = QGridLayout(main_container)
+        main_layout.setSpacing(8)  # Responsive spacing
+        main_layout.setContentsMargins(10, 10, 10, 10)  # Consistent margins
         
         # Configure charts before creating views
         self._setup_charts()
         
         # Create CPU metric container with label above chart
         cpu_container = QWidget()
+        cpu_container.setMinimumSize(250, 180)  # Set minimum container size
         cpu_layout = QVBoxLayout(cpu_container)
-        cpu_layout.setContentsMargins(5, 5, 5, 5)
-        cpu_layout.setSpacing(5)
+        cpu_layout.setContentsMargins(3, 3, 3, 3)  # Reduced margins
+        cpu_layout.setSpacing(3)
         
         self.cpu_percent.setAlignment(Qt.AlignCenter)
         cpu_layout.addWidget(self.cpu_percent)
         
         self.cpu_chart_view = QChartView(self.cpu_chart)
         self.cpu_chart_view.setRenderHint(QPainter.Antialiasing)
-        self.cpu_chart_view.setMinimumHeight(200)
+        # Remove fixed minimum height, use size policy instead
+        self.cpu_chart_view.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         cpu_layout.addWidget(self.cpu_chart_view)
         
         # Create Memory metric container with label above chart
         memory_container = QWidget()
+        memory_container.setMinimumSize(250, 180)  # Set minimum container size
         memory_layout = QVBoxLayout(memory_container)
-        memory_layout.setContentsMargins(5, 5, 5, 5)
-        memory_layout.setSpacing(5)
+        memory_layout.setContentsMargins(3, 3, 3, 3)  # Reduced margins
+        memory_layout.setSpacing(3)
         
         self.memory_label.setAlignment(Qt.AlignCenter)
         memory_layout.addWidget(self.memory_label)
         
         self.memory_chart_view = QChartView(self.memory_chart)
         self.memory_chart_view.setRenderHint(QPainter.Antialiasing)
-        self.memory_chart_view.setMinimumHeight(200)
+        # Remove fixed minimum height, use size policy instead
+        self.memory_chart_view.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         memory_layout.addWidget(self.memory_chart_view)
         
         # Create Disk metric container with label above chart
         disk_container = QWidget()
+        disk_container.setMinimumSize(250, 180)  # Set minimum container size
         disk_layout = QVBoxLayout(disk_container)
-        disk_layout.setContentsMargins(5, 5, 5, 5)
-        disk_layout.setSpacing(5)
+        disk_layout.setContentsMargins(3, 3, 3, 3)  # Reduced margins
+        disk_layout.setSpacing(3)
         
         self.disk_label.setAlignment(Qt.AlignCenter)
         disk_layout.addWidget(self.disk_label)
         
         self.disk_chart_view = QChartView(self.disk_chart)
         self.disk_chart_view.setRenderHint(QPainter.Antialiasing)
-        self.disk_chart_view.setMinimumHeight(200)
+        # Remove fixed minimum height, use size policy instead
+        self.disk_chart_view.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         disk_layout.addWidget(self.disk_chart_view)
         
         # Create Network metric container with label above chart
         network_container = QWidget()
+        network_container.setMinimumSize(250, 180)  # Set minimum container size
         network_layout = QVBoxLayout(network_container)
-        network_layout.setContentsMargins(5, 5, 5, 5)
-        network_layout.setSpacing(5)
+        network_layout.setContentsMargins(3, 3, 3, 3)  # Reduced margins
+        network_layout.setSpacing(3)
         
         self.network_label.setAlignment(Qt.AlignCenter)
         network_layout.addWidget(self.network_label)
         
         self.network_chart_view = QChartView(self.network_chart)
         self.network_chart_view.setRenderHint(QPainter.Antialiasing)
-        self.network_chart_view.setMinimumHeight(200)
+        # Remove fixed minimum height, use size policy instead
+        self.network_chart_view.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         network_layout.addWidget(self.network_chart_view)
         
         # Arrange metric containers in 2x2 grid layout
@@ -1393,13 +1386,16 @@ class MainWindow(QMainWindow):
         main_layout.setRowStretch(0, 1)
         main_layout.setRowStretch(1, 1)
         
+        # Set minimum size for the main container
+        main_container.setMinimumSize(520, 380)
+        
         overview_layout.addWidget(main_container)
         self.tabs.addTab(overview_widget, "Overview")
 
         # Apply borders after all chart views are created
         self._apply_chart_borders()
 
-        print("Overview tab created with labels positioned directly above charts")
+        print("Overview tab created with responsive chart sizing")
 
     def _setup_charts(self) -> None:
         """Configure chart objects with proper axes and series attachments"""
@@ -1864,61 +1860,58 @@ class MainWindow(QMainWindow):
         self.nova_status.setText(f"Voice input {status}.")
 
     def start_voice_listening(self):
-        """Start continuous listening for voice commands"""
+        """Start continuous listening using the library's background feature."""
+        if self.is_listening:
+            return
+
         if not self.recognizer:
             self.init_voice_recognition()
         
-        # Don't start if audio is playing or already listening
-        if self.is_audio_playing or self.is_listening:
-            return
-            
+        # The callback function that will be called on a background thread
+        # when speech is detected.
+        def recognition_callback(recognizer, audio):
+            try:
+                # The recognition is now done inside the callback
+                text = recognizer.recognize_google(audio)
+                # We need to emit a signal to pass the result to the main thread
+                self.voice_input_received.emit(text)
+            except sr.UnknownValueError:
+                # This is common (silence), so we can just ignore it.
+                pass
+            except sr.RequestError as e:
+                # API is unreachable or other issue.
+                print(f"Voice recognition API error: {e}")
+                self.voice_input_received.emit("") # Emit empty to avoid blocking
+
+        # Start listening in the background. This returns a function to stop it.
+        self.stop_listening_callback = self.recognizer.listen_in_background(
+            self.microphone, recognition_callback
+        )
         self.is_listening = True
         self.nova_status.setText("Listening...")
-        
-        # Create new thread each time we start listening
-        self.voice_thread = QThread()
-        self.voice_worker = VoiceWorker(self.recognizer, self.microphone)
-        self.voice_worker.moveToThread(self.voice_thread)
-        
-        self.voice_worker.recognized.connect(self.handle_voice_input)
-        self.voice_thread.started.connect(self.voice_worker.run)
-        self.voice_thread.finished.connect(self.cleanup_voice_thread)
-        self.voice_thread.start()
+        print("Background voice listening started.")
 
     def stop_voice_listening(self):
-        """Stop continuous voice listening"""
-        self.is_listening = False
-        if self.VOICE_INPUT_MODE:
-            self.nova_status.setText("Voice input active")
+        """Stop the background voice listener."""
+        if self.stop_listening_callback:
+            # Call the function returned by listen_in_background to stop it.
+            # wait_for_stop=False makes it non-blocking.
+            self.stop_listening_callback(wait_for_stop=False)
+            self.stop_listening_callback = None
+            self.is_listening = False
+            print("Background voice listening stopped.")
+
+        if not self.VOICE_INPUT_MODE:
+            self.nova_status.setText("Voice input deactivated")
         else:
-            self.nova_status.setText("Nova is ready. Type a command or question.")
-        if hasattr(self, 'voice_thread') and self.voice_thread:
-            if self.voice_thread.isRunning():
-                self.voice_thread.quit()
-                self.voice_thread.wait(500)
-        self.nova_status.setText("Voice input stopped")
-        
+            self.nova_status.setText("Voice input paused")
+            
     @pyqtSlot(str)
     def handle_voice_input(self, text: str):
-        """Handle recognized voice input"""
-        # Only process non-empty successful recognitions
-        if not text or text.startswith("Error:"):
-            # Log error but don't add to chat
-            if text.startswith("Error:"):
-                print(f"Voice recognition error: {text}")
-                
-            # Restart listening if needed
-            if self.VOICE_INPUT_MODE and not self.is_audio_playing:
-                QTimer.singleShot(1000, self.start_voice_listening)
-            return
-            
-        # Set text and send command
-        self.nova_input.setText(text)
-        self.send_nova_command()
-        
-        # Restart listening if still in voice input mode
-        if self.VOICE_INPUT_MODE and not self.is_audio_playing:
-            QTimer.singleShot(1000, self.start_voice_listening)
+        """Handle recognized voice input received from the signal."""
+        if text:
+            self.nova_input.setText(text)
+            self.send_nova_command()
 
     def _cleanup_nova_worker(self) -> None:
         """Clean up Nova worker and thread safely"""
@@ -2022,23 +2015,23 @@ class MainWindow(QMainWindow):
             self.tts_worker = None
 
     def closeEvent(self, event):
-        """Clean up threads on application close"""
-        # Stop voice mode
-        self.VOICE_MODE = False
-        self.VOICE_INPUT_MODE = False
+        """Clean up all running threads and processes on application close."""
+        print("Application closing, ensuring all threads are stopped.")
         
-        # Clean up TTS
-        if hasattr(self, 'tts_thread') and self.tts_thread and self.tts_thread.isRunning():
-            self.tts_thread.quit()
-            self.tts_thread.wait(3000)
-        
-        # Clean up Nova worker
-        if hasattr(self, 'nova_thread') and self.nova_thread and self.nova_thread.isRunning():
-            self.nova_thread.quit()
-            self.nova_thread.wait(3000)
-        
-        # Clean up voice recognition
         self.stop_voice_listening()
-        self.cleanup_voice_thread()
+        self._cleanup_nova_thread()
         
-        event.accept()
+        # Check if background mode is enabled
+        background_enabled = False
+        if hasattr(self, 'background_checkbox'):
+            background_enabled = self.background_checkbox.isChecked()
+        
+        # If background mode is enabled, minimize to tray instead of closing
+        if background_enabled and hasattr(self, 'app_close_requested'):
+            self.app_close_requested(True)
+            event.ignore()
+        else:
+            # Perform full quit
+            if hasattr(self, 'app_close_requested'):
+                self.app_close_requested(False)
+            event.accept()
